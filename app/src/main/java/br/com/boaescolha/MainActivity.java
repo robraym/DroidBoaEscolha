@@ -28,6 +28,9 @@ import android.widget.PopupMenu;
 import android.widget.ProgressBar;
 import android.widget.TextView;
 
+import androidx.appcompat.app.AppCompatActivity;
+import androidx.appcompat.app.AppCompatDelegate;
+
 import com.google.android.gms.auth.api.signin.GoogleSignIn;
 import com.google.android.gms.auth.api.signin.GoogleSignInAccount;
 import com.google.android.gms.auth.api.signin.GoogleSignInClient;
@@ -58,7 +61,7 @@ import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-public class MainActivity extends Activity {
+public class MainActivity extends AppCompatActivity {
     private static final String API_URL = "https://world.openfoodfacts.org/api/v2/product/";
     private static final String USER_AGENT = "BoaEscolhaAndroid/1.0 (Android; contato-local)";
     private static final int REQUEST_CAMERA_PERMISSION = 1001;
@@ -69,6 +72,12 @@ public class MainActivity extends Activity {
     private static final String KEY_SAVED_PRODUCTS = "saved_products";
     private static final String KEY_PROFILE_NAME = "profile_name";
     private static final String KEY_PROFILE_EMAIL = "profile_email";
+    private static final String KEY_THEME_MODE = "theme_mode";
+    private static final String KEY_RESTORE_SCREEN = "restore_screen";
+    private static final String THEME_SYSTEM = "system";
+    private static final String THEME_LIGHT = "light";
+    private static final String THEME_DARK = "dark";
+    private static final String SCREEN_SETTINGS = "settings";
     private static final int MAX_LOCAL_ITEMS = 20;
     private static final int TAB_SEARCH = 2;
     private static final int TAB_LISTS = 3;
@@ -82,6 +91,7 @@ public class MainActivity extends Activity {
 
     private View rootScroll;
     private View topHeader;
+    private View btnBack;
     private View sectionHeader;
     private TextView txtTitle;
     private View searchContainer;
@@ -119,14 +129,17 @@ public class MainActivity extends Activity {
     private String currentListSectionTitle = "";
     private String currentListKey = "";
     private String currentListEmptyMessage = "";
+    private boolean showingAppSettings;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
+        applyPreferredTheme();
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
         rootScroll = findViewById(R.id.rootScroll);
         topHeader = findViewById(R.id.topHeader);
+        btnBack = findViewById(R.id.btnBack);
         sectionHeader = findViewById(R.id.sectionHeader);
         txtTitle = findViewById(R.id.txtTitle);
         searchContainer = findViewById(R.id.searchContainer);
@@ -168,6 +181,7 @@ public class MainActivity extends Activity {
         btnManual.setOnClickListener(view -> searchManualCode());
         btnSaveProduct.setOnClickListener(view -> saveCurrentProduct());
         btnSort.setOnClickListener(view -> showSortMenu());
+        btnBack.setOnClickListener(view -> showProfile());
         findViewById(R.id.navSearch).setOnClickListener(view -> showSearch());
         findViewById(R.id.navLists).setOnClickListener(view -> showSavedProducts());
         findViewById(R.id.navProfile).setOnClickListener(view -> showProfile());
@@ -181,7 +195,13 @@ public class MainActivity extends Activity {
             }
             return false;
         });
-        showSearch();
+        String restoreScreen = getPrefs().getString(KEY_RESTORE_SCREEN, "");
+        if (SCREEN_SETTINGS.equals(restoreScreen)) {
+            getPrefs().edit().remove(KEY_RESTORE_SCREEN).apply();
+            showAppSettings();
+        } else {
+            showSearch();
+        }
         setupFirebase();
     }
 
@@ -696,7 +716,9 @@ public class MainActivity extends Activity {
     }
 
     private void showProduct(ProductInfo product) {
+        showingAppSettings = false;
         currentProduct = product;
+        btnBack.setVisibility(View.GONE);
         sectionHeader.setVisibility(View.GONE);
         dynamicContent.setVisibility(View.GONE);
         txtProductName.setText(product.name);
@@ -802,8 +824,10 @@ public class MainActivity extends Activity {
     }
 
     private void showSearch() {
+        showingAppSettings = false;
         updateNavigationState(TAB_SEARCH);
         topHeader.setVisibility(View.VISIBLE);
+        btnBack.setVisibility(View.GONE);
         sectionHeader.setVisibility(View.VISIBLE);
         txtTitle.setText("Busca");
         searchContainer.setVisibility(View.VISIBLE);
@@ -838,8 +862,10 @@ public class MainActivity extends Activity {
     }
 
     private void showProfile() {
+        showingAppSettings = false;
         updateNavigationState(TAB_PROFILE);
         topHeader.setVisibility(View.GONE);
+        btnBack.setVisibility(View.GONE);
         sectionHeader.setVisibility(View.GONE);
         searchContainer.setVisibility(View.GONE);
         filtersScroll.setVisibility(View.GONE);
@@ -858,12 +884,33 @@ public class MainActivity extends Activity {
         }
     }
 
+    private void showAppSettings() {
+        showingAppSettings = true;
+        updateNavigationState(TAB_PROFILE);
+        topHeader.setVisibility(View.VISIBLE);
+        btnBack.setVisibility(View.VISIBLE);
+        sectionHeader.setVisibility(View.GONE);
+        txtTitle.setText("Configurações");
+        searchContainer.setVisibility(View.GONE);
+        filtersScroll.setVisibility(View.GONE);
+        btnSort.setVisibility(View.GONE);
+        cardStatus.setVisibility(View.GONE);
+        cardResult.setVisibility(View.GONE);
+        dynamicContent.removeAllViews();
+        dynamicContent.setVisibility(View.VISIBLE);
+
+        addProfileMenuRow(R.drawable.ic_settings, "Tema", currentThemeLabel(), true,
+                view -> showThemeDialog());
+    }
+
     private void showLocalList(String title, String sectionTitle, String key, String emptyMessage) {
+        showingAppSettings = false;
         currentListTitle = title;
         currentListSectionTitle = sectionTitle;
         currentListKey = key;
         currentListEmptyMessage = emptyMessage;
         topHeader.setVisibility(View.VISIBLE);
+        btnBack.setVisibility(View.GONE);
         sectionHeader.setVisibility(View.VISIBLE);
         txtTitle.setText(title);
         searchContainer.setVisibility(View.GONE);
@@ -1140,11 +1187,10 @@ public class MainActivity extends Activity {
 
     private void addConnectedProfileScreen(String name, String email) {
         addProfileHeader(name, email);
-        addProfileMenuRow(R.drawable.ic_list, "Produtos salvos", true, view -> showSavedProducts());
-        addProfileMenuRow(R.drawable.ic_settings, "Preferências do aplicativo", true,
-                view -> showMessage("Preferências avançadas entram em uma próxima versão."));
+        addProfileMenuRow(R.drawable.ic_settings, "Configurações do aplicativo", true,
+                view -> showAppSettings());
         addProfileMenuRow(R.drawable.ic_doc, "Termos e privacidade", true,
-                view -> showMessage("A nota é uma orientação simples e não substitui recomendação médica."));
+                view -> showTermsAndPrivacyDialog());
         addProfileMenuRow(R.drawable.ic_logout, "Sair da conta", false, view -> signOutProfile());
 
         TextView version = new TextView(this);
@@ -1157,6 +1203,169 @@ public class MainActivity extends Activity {
                 ViewGroup.LayoutParams.WRAP_CONTENT);
         params.setMargins(0, dp(16), 0, 0);
         dynamicContent.addView(version, params);
+    }
+
+    private void applyPreferredTheme() {
+        String mode = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                .getString(KEY_THEME_MODE, THEME_SYSTEM);
+        switch (mode) {
+            case THEME_LIGHT:
+                AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_NO);
+                break;
+            case THEME_DARK:
+                AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_YES);
+                break;
+            default:
+                AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM);
+                break;
+        }
+    }
+
+    private String currentThemeLabel() {
+        String mode = getPrefs().getString(KEY_THEME_MODE, THEME_SYSTEM);
+        switch (mode) {
+            case THEME_LIGHT:
+                return "Claro";
+            case THEME_DARK:
+                return "Escuro";
+            default:
+                return "Conforme configurado no sistema";
+        }
+    }
+
+    private void showThemeDialog() {
+        AlertDialog dialog = createRoundedDialog();
+        LinearLayout content = createDialogContent();
+
+        addDialogTitle(content, "Tema");
+        addDialogMessage(content, "Escolha como o Boa Escolha deve aparecer neste aparelho.");
+
+        String current = getPrefs().getString(KEY_THEME_MODE, THEME_SYSTEM);
+        addThemeOption(content, dialog, "Conforme o sistema", "Usa o modo claro ou escuro configurado no celular.", THEME_SYSTEM, current);
+        addThemeOption(content, dialog, "Claro", "Mantém o app sempre claro.", THEME_LIGHT, current);
+        addThemeOption(content, dialog, "Escuro", "Mantém o app sempre escuro.", THEME_DARK, current);
+
+        addDialogCloseButton(content, dialog, "Cancelar");
+        showRoundedDialog(dialog, content);
+    }
+
+    private void addThemeOption(LinearLayout content, AlertDialog dialog, String titleText, String summaryText, String value, String current) {
+        LinearLayout row = new LinearLayout(this);
+        row.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setPadding(0, dp(12), 0, dp(12));
+        row.setClickable(true);
+        row.setOnClickListener(view -> {
+            getPrefs().edit().putString(KEY_THEME_MODE, value).apply();
+            getPrefs().edit().putString(KEY_RESTORE_SCREEN, SCREEN_SETTINGS).apply();
+            applyPreferredTheme();
+            dialog.dismiss();
+            recreate();
+        });
+
+        LinearLayout texts = new LinearLayout(this);
+        texts.setOrientation(LinearLayout.VERTICAL);
+
+        TextView title = new TextView(this);
+        title.setText(titleText);
+        title.setTextColor(getColor(R.color.one_ui_text_primary));
+        title.setTextSize(15);
+        title.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        texts.addView(title);
+
+        TextView summary = new TextView(this);
+        summary.setText(summaryText);
+        summary.setTextColor(getColor(R.color.one_ui_text_secondary));
+        summary.setTextSize(12);
+        summary.setLineSpacing(dp(2), 1f);
+        texts.addView(summary);
+
+        row.addView(texts, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+
+        if (value.equals(current)) {
+            TextView selected = new TextView(this);
+            selected.setText("Selecionado");
+            selected.setTextColor(getColor(R.color.one_ui_accent));
+            selected.setTextSize(12);
+            selected.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+            row.addView(selected);
+        }
+
+        content.addView(row, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
+    }
+
+    private void showTermsAndPrivacyDialog() {
+        AlertDialog dialog = createRoundedDialog();
+        LinearLayout content = createDialogContent();
+
+        addDialogTitle(content, "Termos e privacidade");
+        addDialogMessage(content,
+                "O Boa Escolha consulta dados públicos do Open Food Facts e mostra uma nota simples para ajudar na comparação de alimentos.\n\n" +
+                        "A nota é apenas uma orientação alimentar geral. Ela não substitui avaliação médica, nutricional ou recomendação profissional.\n\n" +
+                        "Quando você entra com sua conta, o app pode sincronizar histórico e listas no Firebase para uso em outro aparelho. Nome, e-mail e produtos salvos ficam associados à sua conta.\n\n" +
+                        "Você pode sair da conta pelo Perfil. Recursos e textos podem mudar enquanto o app estiver em desenvolvimento.");
+        addDialogCloseButton(content, dialog, "Fechar");
+        showRoundedDialog(dialog, content);
+    }
+
+    private AlertDialog createRoundedDialog() {
+        return new AlertDialog.Builder(this).create();
+    }
+
+    private LinearLayout createDialogContent() {
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setPadding(dp(22), dp(20), dp(22), dp(18));
+        content.setBackground(roundedDrawable(getColor(R.color.one_ui_surface), dp(28)));
+        return content;
+    }
+
+    private void addDialogTitle(LinearLayout content, String titleText) {
+        TextView title = new TextView(this);
+        title.setText(titleText);
+        title.setTextColor(getColor(R.color.one_ui_text_primary));
+        title.setTextSize(20);
+        title.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        content.addView(title, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
+    }
+
+    private void addDialogMessage(LinearLayout content, String messageText) {
+        TextView message = new TextView(this);
+        message.setText(messageText);
+        message.setTextColor(getColor(R.color.one_ui_text_secondary));
+        message.setTextSize(14);
+        message.setLineSpacing(dp(3), 1f);
+        LinearLayout.LayoutParams messageParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        messageParams.setMargins(0, dp(10), 0, dp(14));
+        content.addView(message, messageParams);
+    }
+
+    private void addDialogCloseButton(LinearLayout content, AlertDialog dialog, String text) {
+        Button button = new Button(this);
+        button.setText(text);
+        button.setAllCaps(false);
+        button.setTextColor(getColor(R.color.one_ui_text_primary));
+        button.setTextSize(14);
+        button.setBackgroundResource(R.drawable.bg_button_secondary);
+        button.setOnClickListener(view -> dialog.dismiss());
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(120), dp(44));
+        params.gravity = android.view.Gravity.END;
+        params.setMargins(0, dp(8), 0, 0);
+        content.addView(button, params);
+    }
+
+    private void showRoundedDialog(AlertDialog dialog, LinearLayout content) {
+        dialog.setView(content);
+        dialog.show();
+        if (dialog.getWindow() != null) {
+            dialog.getWindow().setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+        }
     }
 
     private void addCenteredTitle(String text, int sizeSp, int topMargin, boolean bold) {
@@ -1268,6 +1477,10 @@ public class MainActivity extends Activity {
     }
 
     private void addProfileMenuRow(int iconRes, String titleText, boolean showChevron, View.OnClickListener listener) {
+        addProfileMenuRow(iconRes, titleText, "", showChevron, listener);
+    }
+
+    private void addProfileMenuRow(int iconRes, String titleText, String summaryText, boolean showChevron, View.OnClickListener listener) {
         View divider = new View(this);
         divider.setBackgroundResource(R.drawable.bg_divider);
         dynamicContent.addView(divider, new LinearLayout.LayoutParams(
@@ -1287,12 +1500,25 @@ public class MainActivity extends Activity {
         icon.setImageResource(iconRes);
         row.addView(icon, new LinearLayout.LayoutParams(dp(28), dp(28)));
 
+        LinearLayout texts = new LinearLayout(this);
+        texts.setOrientation(LinearLayout.VERTICAL);
+        texts.setPadding(dp(12), 0, 0, 0);
+
         TextView title = new TextView(this);
         title.setText(titleText);
         title.setTextColor(getColor(R.color.one_ui_text_primary));
         title.setTextSize(15);
-        title.setPadding(dp(12), 0, 0, 0);
-        row.addView(title, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        texts.addView(title);
+
+        if (!TextUtils.isEmpty(summaryText)) {
+            TextView summary = new TextView(this);
+            summary.setText(summaryText);
+            summary.setTextColor(getColor(R.color.one_ui_text_secondary));
+            summary.setTextSize(12);
+            summary.setMaxLines(1);
+            texts.addView(summary);
+        }
+        row.addView(texts, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
 
         if (showChevron) {
             ImageView arrow = new ImageView(this);
@@ -1938,6 +2164,15 @@ public class MainActivity extends Activity {
             return;
         }
         super.onActivityResult(requestCode, resultCode, data);
+    }
+
+    @Override
+    public void onBackPressed() {
+        if (showingAppSettings) {
+            showProfile();
+            return;
+        }
+        super.onBackPressed();
     }
 
     private void firebaseAuthWithGoogle(GoogleSignInAccount account) {

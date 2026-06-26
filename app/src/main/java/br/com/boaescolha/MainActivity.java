@@ -2,11 +2,14 @@ package br.com.boaescolha;
 
 import android.Manifest;
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.Color;
+import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
 import android.os.Handler;
@@ -1049,8 +1052,7 @@ public class MainActivity extends Activity {
             removeButton.setBackgroundResource(R.drawable.bg_icon_action);
             removeButton.setContentDescription("Remover da lista");
             removeButton.setPadding(dp(8), dp(8), dp(8), dp(8));
-            removeButton.setOnClickListener(view -> {
-                removeProductFromList(KEY_SAVED_PRODUCTS, code, true);
+            removeButton.setOnClickListener(view -> showRemoveSavedProductConfirmation(code, name, () -> {
                 renderLocalList(
                         currentListTitle,
                         currentListSectionTitle,
@@ -1060,8 +1062,7 @@ public class MainActivity extends Activity {
                 if (currentProduct != null && code.equals(currentProduct.code)) {
                     updateSaveButtonState();
                 }
-                showMessage("Produto removido da lista.");
-            });
+            }));
             LinearLayout.LayoutParams removeParams = new LinearLayout.LayoutParams(dp(40), dp(40));
             removeParams.setMargins(dp(6), 0, 0, 0);
             row.addView(removeButton, removeParams);
@@ -1451,14 +1452,88 @@ public class MainActivity extends Activity {
             return;
         }
         if (isProductSaved(currentProduct.code)) {
-            removeProductFromList(KEY_SAVED_PRODUCTS, currentProduct.code, true);
-            updateSaveButtonState();
-            showMessage("Produto removido da lista.");
+            showRemoveSavedProductConfirmation(currentProduct.code, currentProduct.name, this::updateSaveButtonState);
             return;
         }
         addLocalItem(KEY_SAVED_PRODUCTS, currentProduct);
         updateSaveButtonState();
         showMessage("Produto salvo em Listas.");
+    }
+
+    private void showRemoveSavedProductConfirmation(String code, String productName, Runnable afterRemove) {
+        if (TextUtils.isEmpty(code)) {
+            return;
+        }
+
+        AlertDialog dialog = new AlertDialog.Builder(this).create();
+
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setPadding(dp(22), dp(20), dp(22), dp(18));
+        content.setBackground(roundedDrawable(getColor(R.color.one_ui_surface), dp(28)));
+
+        TextView title = new TextView(this);
+        title.setText("Remover da lista?");
+        title.setTextColor(getColor(R.color.one_ui_text_primary));
+        title.setTextSize(20);
+        title.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        content.addView(title, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        TextView message = new TextView(this);
+        String displayName = firstNonEmpty(productName, "este produto");
+        message.setText("Você quer remover \"" + displayName + "\" da sua lista?");
+        message.setTextColor(getColor(R.color.one_ui_text_secondary));
+        message.setTextSize(14);
+        message.setLineSpacing(dp(3), 1f);
+        LinearLayout.LayoutParams messageParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        messageParams.setMargins(0, dp(10), 0, dp(18));
+        content.addView(message, messageParams);
+
+        LinearLayout actions = new LinearLayout(this);
+        actions.setGravity(android.view.Gravity.END);
+        actions.setOrientation(LinearLayout.HORIZONTAL);
+
+        Button cancelButton = new Button(this);
+        cancelButton.setText("Cancelar");
+        cancelButton.setAllCaps(false);
+        cancelButton.setTextColor(getColor(R.color.one_ui_text_primary));
+        cancelButton.setTextSize(14);
+        cancelButton.setBackgroundResource(R.drawable.bg_button_secondary);
+        cancelButton.setOnClickListener(view -> dialog.dismiss());
+        LinearLayout.LayoutParams cancelParams = new LinearLayout.LayoutParams(dp(112), dp(44));
+        cancelParams.setMargins(0, 0, dp(8), 0);
+        actions.addView(cancelButton, cancelParams);
+
+        Button removeButton = new Button(this);
+        removeButton.setText("Remover");
+        removeButton.setAllCaps(false);
+        removeButton.setTextColor(Color.WHITE);
+        removeButton.setTextSize(14);
+        removeButton.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        removeButton.setBackground(roundedDrawable(getColor(R.color.one_ui_danger), dp(22)));
+        removeButton.setOnClickListener(view -> {
+            dialog.dismiss();
+            removeProductFromList(KEY_SAVED_PRODUCTS, code, true);
+            if (afterRemove != null) {
+                afterRemove.run();
+            }
+            showMessage("Produto removido da lista.");
+        });
+        actions.addView(removeButton, new LinearLayout.LayoutParams(dp(112), dp(44)));
+
+        content.addView(actions, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        dialog.setView(content);
+        dialog.show();
+        if (dialog.getWindow() != null) {
+            dialog.getWindow().setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+        }
     }
 
     private void updateSaveButtonState() {
@@ -1778,6 +1853,13 @@ public class MainActivity extends Activity {
 
     private int dp(int value) {
         return Math.round(value * getResources().getDisplayMetrics().density);
+    }
+
+    private GradientDrawable roundedDrawable(int color, int radius) {
+        GradientDrawable drawable = new GradientDrawable();
+        drawable.setColor(color);
+        drawable.setCornerRadius(radius);
+        return drawable;
     }
 
     private void updateScoreColor(int score) {

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Boa Escolha</string>
+    <string name="scan_product">Escanear produto</string>
+    <string name="manual_code_hint">Digite o código de barras</string>
+    <string name="consult_code">Consultar código</string>
+    <string name="try_another">Tentar outro código</string>
+    <string name="product_image">Imagem do produto</string>
+</resources>
+

@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "60887498368",
+    "project_id": "droid-boa-escolha",
+    "storage_bucket": "droid-boa-escolha.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:60887498368:android:65b2a00004aef1b6f53065",
+        "android_client_info": {
+          "package_name": "br.com.boaescolha"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "60887498368-rc7n6q9ofb4uob2g720q5k5fbral4uuj.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "br.com.boaescolha",
+            "certificate_hash": "6099c801441e0bad44e9e147575e6f5200948733"
+          }
+        },
+        {
+          "client_id": "60887498368-qm3a8mm3h55ftbu1qsnv1mqkkhidqntk.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyC3EQ8xDE4W9PFvtqAxcrJR0_xBeEzxUzU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "60887498368-qm3a8mm3h55ftbu1qsnv1mqkkhidqntk.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

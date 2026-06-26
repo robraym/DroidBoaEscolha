@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="one_ui_background">#FFFAFAFC</color>
+    <color name="one_ui_surface">#FFFFFFFF</color>
+    <color name="one_ui_surface_alt">#FFF1F3F7</color>
+    <color name="one_ui_surface_soft">#FFF7F8FB</color>
+    <color name="one_ui_stroke">#FFDADDE5</color>
+    <color name="one_ui_stroke_soft">#FFE9EBF1</color>
+    <color name="one_ui_text_primary">#FF101216</color>
+    <color name="one_ui_text_secondary">#FF5E6572</color>
+    <color name="one_ui_text_muted">#FF8E95A1</color>
+    <color name="one_ui_accent">#FF2189FF</color>
+    <color name="one_ui_accent_dark">#FF006BEA</color>
+    <color name="one_ui_good">#FF35A852</color>
+    <color name="one_ui_warning">#FFE5A12A</color>
+    <color name="one_ui_danger">#FFE34F4F</color>
+    <color name="launcher_background">#FF9ED739</color>
+    <color name="transparent">#00000000</color>
+</resources>

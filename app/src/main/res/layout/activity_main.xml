@@ -1,0 +1,483 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/one_ui_background">
+
+    <ScrollView
+        android:id="@+id/rootScroll"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:clipToPadding="false"
+        android:fillViewport="true"
+        android:overScrollMode="never"
+        android:paddingBottom="74dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingStart="20dp"
+            android:paddingTop="48dp"
+            android:paddingEnd="20dp"
+            android:paddingBottom="88dp">
+
+            <LinearLayout
+                android:id="@+id/topHeader"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingEnd="0dp">
+
+                <TextView
+                    android:id="@+id/txtTitle"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Busca"
+                    android:textColor="@color/one_ui_text_primary"
+                    android:textSize="30sp"
+                    android:textStyle="bold" />
+
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/searchContainer"
+                android:layout_width="match_parent"
+                android:layout_height="54dp"
+                android:layout_marginTop="18dp"
+                android:background="@drawable/bg_search_bar"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <ImageView
+                    android:layout_width="30dp"
+                    android:layout_height="30dp"
+                    android:contentDescription="@string/consult_code"
+                    android:padding="5dp"
+                    android:src="@drawable/ic_search" />
+
+                <EditText
+                    android:id="@+id/editBarcode"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_marginStart="6dp"
+                    android:layout_weight="1"
+                    android:background="@color/transparent"
+                    android:hint="Código de barras"
+                    android:imeOptions="actionSearch"
+                    android:inputType="number"
+                    android:maxLines="1"
+                    android:singleLine="true"
+                    android:textColor="@color/one_ui_text_primary"
+                    android:textColorHint="@color/one_ui_text_secondary"
+                    android:textSize="16sp" />
+
+                <ImageButton
+                    android:id="@+id/btnManual"
+                    android:layout_width="42dp"
+                    android:layout_height="42dp"
+                    android:layout_marginEnd="4dp"
+                    android:background="@drawable/bg_icon_action"
+                    android:contentDescription="Buscar"
+                    android:padding="9dp"
+                    android:src="@drawable/ic_search"
+                    android:tint="@color/one_ui_accent" />
+            </LinearLayout>
+
+            <Space
+                android:id="@+id/filtersScroll"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:visibility="gone" />
+
+            <LinearLayout
+                android:id="@+id/sectionHeader"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="20dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingEnd="0dp">
+
+                <TextView
+                    android:id="@+id/txtSectionTitle"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Recentes"
+                    android:textColor="@color/one_ui_text_primary"
+                    android:textSize="15sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/txtSectionMeta"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Open Food Facts"
+                    android:textColor="@color/one_ui_text_secondary"
+                    android:textSize="13sp" />
+
+                <ImageButton
+                    android:id="@+id/btnSort"
+                    android:layout_width="36dp"
+                    android:layout_height="36dp"
+                    android:layout_marginStart="6dp"
+                    android:background="@drawable/bg_icon_action"
+                    android:contentDescription="Ordenar"
+                    android:padding="8dp"
+                    android:src="@drawable/ic_sort"
+                    android:tint="@color/one_ui_text_secondary"
+                    android:visibility="gone" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/dynamicContent"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:orientation="vertical"
+                android:visibility="gone" />
+
+            <ProgressBar
+                android:id="@+id/progress"
+                android:layout_width="34dp"
+                android:layout_height="34dp"
+                android:layout_gravity="center_horizontal"
+                android:layout_marginTop="18dp"
+                android:indeterminate="true"
+                android:indeterminateTint="@color/one_ui_accent"
+                android:visibility="gone" />
+
+            <LinearLayout
+                android:id="@+id/cardStatus"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="14dp"
+                android:background="@drawable/bg_status_card"
+                android:orientation="vertical"
+                android:padding="12dp"
+                android:visibility="gone">
+
+                <TextView
+                    android:id="@+id/txtStatus"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:lineSpacingExtra="2dp"
+                    android:textColor="@color/one_ui_text_secondary"
+                    android:textSize="14sp" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/cardResult"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:background="@drawable/bg_result_row"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingTop="6dp"
+                android:paddingBottom="6dp"
+                android:visibility="gone">
+
+                <ImageView
+                    android:id="@+id/imgProduct"
+                    android:layout_width="88dp"
+                    android:layout_height="88dp"
+                    android:background="@drawable/bg_product_image"
+                    android:contentDescription="@string/product_image"
+                    android:padding="6dp"
+                    android:scaleType="centerCrop"
+                    android:visibility="gone" />
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="10dp"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:id="@+id/txtProductName"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:maxLines="2"
+                        android:textColor="@color/one_ui_text_primary"
+                        android:textSize="16sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/txtBrand"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="2dp"
+                        android:maxLines="1"
+                        android:textColor="@color/one_ui_text_secondary"
+                        android:textSize="13sp" />
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal">
+
+                        <TextView
+                            android:id="@+id/txtScore"
+                            android:layout_width="44dp"
+                            android:layout_height="44dp"
+                            android:background="@drawable/bg_score_circle"
+                            android:gravity="center"
+                            android:textColor="@android:color/white"
+                            android:textSize="13sp"
+                            android:textStyle="bold" />
+
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="8dp"
+                            android:layout_weight="1"
+                            android:orientation="vertical">
+
+                            <TextView
+                                android:id="@+id/txtClassification"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:maxLines="2"
+                                android:textColor="@color/one_ui_text_primary"
+                                android:textSize="13sp"
+                                android:textStyle="bold" />
+
+                            <TextView
+                                android:id="@+id/txtNutriScore"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="2dp"
+                                android:textColor="@color/one_ui_text_secondary"
+                                android:textSize="12sp" />
+                        </LinearLayout>
+                    </LinearLayout>
+
+                    <TextView
+                        android:id="@+id/txtExplanation"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        android:lineSpacingExtra="2dp"
+                        android:maxLines="2"
+                        android:textColor="@color/one_ui_text_secondary"
+                        android:textSize="12sp" />
+
+                    <Button
+                        android:id="@+id/btnSaveProduct"
+                        android:layout_width="112dp"
+                        android:layout_height="34dp"
+                        android:layout_marginTop="6dp"
+                        android:background="@drawable/bg_button_secondary"
+                        android:text="Salvar"
+                        android:textAllCaps="false"
+                        android:textColor="@color/one_ui_text_primary"
+                        android:textSize="13sp"
+                        android:textStyle="bold" />
+                </LinearLayout>
+
+                <ImageView
+                    android:layout_width="24dp"
+                    android:layout_height="24dp"
+                    android:layout_marginStart="4dp"
+                    android:contentDescription="Abrir"
+                    android:src="@drawable/ic_chevron_right" />
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/txtFooter"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:lineSpacingExtra="2dp"
+                android:text="A nota é uma orientação simples e não substitui recomendação médica."
+                android:textColor="@color/one_ui_text_muted"
+                android:textSize="12sp" />
+        </LinearLayout>
+    </ScrollView>
+
+    <LinearLayout
+        android:id="@+id/bottomNav"
+        android:layout_width="match_parent"
+        android:layout_height="70dp"
+        android:layout_gravity="bottom"
+            android:background="@drawable/bg_bottom_nav"
+            android:gravity="center"
+            android:orientation="horizontal"
+            android:paddingStart="6dp"
+            android:paddingEnd="6dp"
+            android:paddingBottom="2dp">
+
+        <LinearLayout
+            android:id="@+id/navHistory"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:clickable="true"
+            android:gravity="center"
+            android:orientation="vertical">
+
+            <View
+                android:id="@+id/indicatorHistory"
+                android:layout_width="34dp"
+                android:layout_height="3dp"
+                android:layout_marginBottom="6dp"
+                android:background="@drawable/bg_nav_indicator"
+                android:visibility="invisible" />
+
+            <ImageView
+                android:id="@+id/iconHistory"
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:src="@drawable/ic_history"
+                android:tint="@color/one_ui_text_secondary" />
+
+            <TextView
+                android:id="@+id/textHistory"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Histórico"
+                android:textColor="@color/one_ui_text_secondary"
+                android:textSize="11sp" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/navSearch"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:clickable="true"
+            android:gravity="center"
+            android:orientation="vertical">
+
+            <View
+                android:id="@+id/indicatorSearch"
+                android:layout_width="34dp"
+                android:layout_height="3dp"
+                android:layout_marginBottom="6dp"
+                android:background="@drawable/bg_nav_indicator" />
+
+            <ImageView
+                android:id="@+id/iconSearch"
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:src="@drawable/ic_search"
+                android:tint="@color/one_ui_text_secondary" />
+
+            <TextView
+                android:id="@+id/textSearch"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Busca"
+                android:textColor="@color/one_ui_text_secondary"
+                android:textSize="11sp" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/btnScan"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:clickable="true"
+            android:focusable="true"
+            android:gravity="center"
+            android:orientation="vertical"
+            android:paddingTop="0dp">
+
+            <View
+                android:id="@+id/indicatorScan"
+                android:layout_width="34dp"
+                android:layout_height="3dp"
+                android:layout_marginBottom="6dp"
+                android:background="@drawable/bg_nav_indicator"
+                android:visibility="invisible" />
+
+            <ImageView
+                android:id="@+id/iconScan"
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:src="@drawable/ic_scan"
+                android:tint="@color/one_ui_text_secondary" />
+
+            <TextView
+                android:id="@+id/textScan"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Scan"
+                android:textColor="@color/one_ui_text_secondary"
+                android:textSize="11sp" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/navLists"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:clickable="true"
+            android:gravity="center"
+            android:orientation="vertical">
+
+            <View
+                android:id="@+id/indicatorLists"
+                android:layout_width="34dp"
+                android:layout_height="3dp"
+                android:layout_marginBottom="6dp"
+                android:background="@drawable/bg_nav_indicator"
+                android:visibility="invisible" />
+
+            <ImageView
+                android:id="@+id/iconLists"
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:src="@drawable/ic_list"
+                android:tint="@color/one_ui_text_secondary" />
+
+            <TextView
+                android:id="@+id/textLists"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Listas"
+                android:textColor="@color/one_ui_text_secondary"
+                android:textSize="11sp" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/navProfile"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:clickable="true"
+            android:gravity="center"
+            android:orientation="vertical">
+
+            <View
+                android:id="@+id/indicatorProfile"
+                android:layout_width="34dp"
+                android:layout_height="3dp"
+                android:layout_marginBottom="6dp"
+                android:background="@drawable/bg_nav_indicator"
+                android:visibility="invisible" />
+
+            <ImageView
+                android:id="@+id/iconProfile"
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:src="@drawable/ic_user"
+                android:tint="@color/one_ui_text_secondary" />
+
+            <TextView
+                android:id="@+id/textProfile"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Perfil"
+                android:textColor="@color/one_ui_text_secondary"
+                android:textSize="11sp" />
+        </LinearLayout>
+    </LinearLayout>
+</FrameLayout>

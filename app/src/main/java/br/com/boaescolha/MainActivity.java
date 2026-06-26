@@ -70,7 +70,6 @@ public class MainActivity extends Activity {
     private static final String KEY_PROFILE_NAME = "profile_name";
     private static final String KEY_PROFILE_EMAIL = "profile_email";
     private static final int MAX_LOCAL_ITEMS = 20;
-    private static final int TAB_HISTORY = 1;
     private static final int TAB_SEARCH = 2;
     private static final int TAB_LISTS = 3;
     private static final int TAB_PROFILE = 4;
@@ -104,15 +103,12 @@ public class MainActivity extends Activity {
     private TextView txtNutriScore;
     private TextView txtExplanation;
     private Button btnSaveProduct;
-    private View indicatorHistory;
     private View indicatorSearch;
     private View indicatorLists;
     private View indicatorProfile;
-    private ImageView iconHistory;
     private ImageView iconSearch;
     private ImageView iconLists;
     private ImageView iconProfile;
-    private TextView textHistory;
     private TextView textSearch;
     private TextView textLists;
     private TextView textProfile;
@@ -156,15 +152,12 @@ public class MainActivity extends Activity {
         View btnManual = findViewById(R.id.btnManual);
         btnSaveProduct = findViewById(R.id.btnSaveProduct);
         View bottomNav = findViewById(R.id.bottomNav);
-        indicatorHistory = findViewById(R.id.indicatorHistory);
         indicatorSearch = findViewById(R.id.indicatorSearch);
         indicatorLists = findViewById(R.id.indicatorLists);
         indicatorProfile = findViewById(R.id.indicatorProfile);
-        iconHistory = findViewById(R.id.iconHistory);
         iconSearch = findViewById(R.id.iconSearch);
         iconLists = findViewById(R.id.iconLists);
         iconProfile = findViewById(R.id.iconProfile);
-        textHistory = findViewById(R.id.textHistory);
         textSearch = findViewById(R.id.textSearch);
         textLists = findViewById(R.id.textLists);
         textProfile = findViewById(R.id.textProfile);
@@ -175,7 +168,6 @@ public class MainActivity extends Activity {
         btnManual.setOnClickListener(view -> searchManualCode());
         btnSaveProduct.setOnClickListener(view -> saveCurrentProduct());
         btnSort.setOnClickListener(view -> showSortMenu());
-        findViewById(R.id.navHistory).setOnClickListener(view -> showHistory());
         findViewById(R.id.navSearch).setOnClickListener(view -> showSearch());
         findViewById(R.id.navLists).setOnClickListener(view -> showSavedProducts());
         findViewById(R.id.navProfile).setOnClickListener(view -> showProfile());
@@ -194,11 +186,9 @@ public class MainActivity extends Activity {
     }
 
     private void updateNavigationState(int activeTab) {
-        setNavIndicator(indicatorHistory, activeTab == TAB_HISTORY);
         setNavIndicator(indicatorSearch, activeTab == TAB_SEARCH);
         setNavIndicator(indicatorLists, activeTab == TAB_LISTS);
         setNavIndicator(indicatorProfile, activeTab == TAB_PROFILE);
-        setNavItemState(iconHistory, textHistory, activeTab == TAB_HISTORY);
         setNavItemState(iconSearch, textSearch, activeTab == TAB_SEARCH);
         setNavItemState(iconLists, textLists, activeTab == TAB_LISTS);
         setNavItemState(iconProfile, textProfile, activeTab == TAB_PROFILE);
@@ -842,11 +832,6 @@ public class MainActivity extends Activity {
         }
     }
 
-    private void showHistory() {
-        updateNavigationState(TAB_HISTORY);
-        showLocalList("Histórico", "Vistos recentemente", KEY_HISTORY, "Nenhum produto consultado ainda.");
-    }
-
     private void showSavedProducts() {
         updateNavigationState(TAB_LISTS);
         showLocalList("Listas", "Minha lista", KEY_SAVED_PRODUCTS, "Nenhum produto salvo ainda. Consulte um produto e toque em Salvar.");
@@ -1155,7 +1140,6 @@ public class MainActivity extends Activity {
 
     private void addConnectedProfileScreen(String name, String email) {
         addProfileHeader(name, email);
-        addProfileMenuRow(R.drawable.ic_history, "Histórico sincronizado", true, view -> showHistory());
         addProfileMenuRow(R.drawable.ic_list, "Produtos salvos", true, view -> showSavedProducts());
         addProfileMenuRow(R.drawable.ic_settings, "Preferências do aplicativo", true,
                 view -> showMessage("Preferências avançadas entram em uma próxima versão."));

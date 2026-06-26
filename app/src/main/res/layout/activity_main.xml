@@ -315,39 +315,6 @@
             android:paddingBottom="2dp">
 
         <LinearLayout
-            android:id="@+id/navHistory"
-            android:layout_width="0dp"
-            android:layout_height="match_parent"
-            android:layout_weight="1"
-            android:clickable="true"
-            android:gravity="center"
-            android:orientation="vertical">
-
-            <View
-                android:id="@+id/indicatorHistory"
-                android:layout_width="34dp"
-                android:layout_height="3dp"
-                android:layout_marginBottom="6dp"
-                android:background="@drawable/bg_nav_indicator"
-                android:visibility="invisible" />
-
-            <ImageView
-                android:id="@+id/iconHistory"
-                android:layout_width="24dp"
-                android:layout_height="24dp"
-                android:src="@drawable/ic_history"
-                android:tint="@color/one_ui_text_secondary" />
-
-            <TextView
-                android:id="@+id/textHistory"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Histórico"
-                android:textColor="@color/one_ui_text_secondary"
-                android:textSize="11sp" />
-        </LinearLayout>
-
-        <LinearLayout
             android:id="@+id/navSearch"
             android:layout_width="0dp"
             android:layout_height="match_parent"

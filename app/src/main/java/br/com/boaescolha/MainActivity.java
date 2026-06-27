@@ -21,6 +21,7 @@ import android.view.ViewGroup;
 import android.view.inputmethod.EditorInfo;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.FrameLayout;
 import android.widget.ImageButton;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
@@ -28,6 +29,7 @@ import android.widget.PopupMenu;
 import android.widget.ProgressBar;
 import android.widget.TextView;
 
+import androidx.activity.OnBackPressedCallback;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.appcompat.app.AppCompatDelegate;
 
@@ -90,6 +92,7 @@ public class MainActivity extends AppCompatActivity {
     private GoogleSignInClient googleSignInClient;
 
     private View rootScroll;
+    private View mainContent;
     private View topHeader;
     private View btnBack;
     private View sectionHeader;
@@ -105,6 +108,7 @@ public class MainActivity extends AppCompatActivity {
     private View cardStatus;
     private TextView txtStatus;
     private View cardResult;
+    private View txtFooter;
     private ImageView imgProduct;
     private TextView txtProductName;
     private TextView txtBrand;
@@ -122,6 +126,7 @@ public class MainActivity extends AppCompatActivity {
     private TextView textSearch;
     private TextView textLists;
     private TextView textProfile;
+    private View bottomNav;
     private ProductInfo currentProduct;
     private String currentCode = "";
     private boolean sortHighestFirst = true;
@@ -130,6 +135,10 @@ public class MainActivity extends AppCompatActivity {
     private String currentListKey = "";
     private String currentListEmptyMessage = "";
     private boolean showingAppSettings;
+    private boolean showingProductDetails;
+    private int productReturnTab = TAB_SEARCH;
+    private int activeTab = TAB_SEARCH;
+    private int navigationInsetBottom;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -138,6 +147,7 @@ public class MainActivity extends AppCompatActivity {
         setContentView(R.layout.activity_main);
 
         rootScroll = findViewById(R.id.rootScroll);
+        mainContent = findViewById(R.id.mainContent);
         topHeader = findViewById(R.id.topHeader);
         btnBack = findViewById(R.id.btnBack);
         sectionHeader = findViewById(R.id.sectionHeader);
@@ -153,6 +163,7 @@ public class MainActivity extends AppCompatActivity {
         cardStatus = findViewById(R.id.cardStatus);
         txtStatus = findViewById(R.id.txtStatus);
         cardResult = findViewById(R.id.cardResult);
+        txtFooter = findViewById(R.id.txtFooter);
         imgProduct = findViewById(R.id.imgProduct);
         txtProductName = findViewById(R.id.txtProductName);
         txtBrand = findViewById(R.id.txtBrand);
@@ -164,7 +175,7 @@ public class MainActivity extends AppCompatActivity {
         View btnScan = findViewById(R.id.btnScan);
         View btnManual = findViewById(R.id.btnManual);
         btnSaveProduct = findViewById(R.id.btnSaveProduct);
-        View bottomNav = findViewById(R.id.bottomNav);
+        bottomNav = findViewById(R.id.bottomNav);
         indicatorSearch = findViewById(R.id.indicatorSearch);
         indicatorLists = findViewById(R.id.indicatorLists);
         indicatorProfile = findViewById(R.id.indicatorProfile);
@@ -181,10 +192,18 @@ public class MainActivity extends AppCompatActivity {
         btnManual.setOnClickListener(view -> searchManualCode());
         btnSaveProduct.setOnClickListener(view -> saveCurrentProduct());
         btnSort.setOnClickListener(view -> showSortMenu());
-        btnBack.setOnClickListener(view -> showProfile());
+        btnBack.setOnClickListener(view -> handleBackNavigation());
         findViewById(R.id.navSearch).setOnClickListener(view -> showSearch());
         findViewById(R.id.navLists).setOnClickListener(view -> showSavedProducts());
         findViewById(R.id.navProfile).setOnClickListener(view -> showProfile());
+        getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
+            @Override
+            public void handleOnBackPressed() {
+                if (!handleBackNavigation()) {
+                    finish();
+                }
+            }
+        });
         editBarcode.setOnEditorActionListener((view, actionId, event) -> {
             boolean enterPressed = event != null
                     && event.getKeyCode() == KeyEvent.KEYCODE_ENTER
@@ -206,6 +225,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void updateNavigationState(int activeTab) {
+        this.activeTab = activeTab;
         setNavIndicator(indicatorSearch, activeTab == TAB_SEARCH);
         setNavIndicator(indicatorLists, activeTab == TAB_LISTS);
         setNavIndicator(indicatorProfile, activeTab == TAB_PROFILE);
@@ -222,6 +242,25 @@ public class MainActivity extends AppCompatActivity {
         int color = getColor(active ? R.color.one_ui_accent : R.color.one_ui_text_secondary);
         icon.setColorFilter(color);
         text.setTextColor(color);
+    }
+
+    private void setBottomNavigationVisible(boolean visible) {
+        bottomNav.setVisibility(visible ? View.VISIBLE : View.GONE);
+        updateBottomNavigationSpacing();
+    }
+
+    private void updateBottomNavigationSpacing() {
+        boolean navVisible = bottomNav != null && bottomNav.getVisibility() == View.VISIBLE;
+        rootScroll.setPadding(
+                rootScroll.getPaddingLeft(),
+                rootScroll.getPaddingTop(),
+                rootScroll.getPaddingRight(),
+                navigationInsetBottom + (navVisible ? dp(74) : 0));
+        mainContent.setPadding(
+                mainContent.getPaddingLeft(),
+                mainContent.getPaddingTop(),
+                mainContent.getPaddingRight(),
+                navVisible ? dp(88) : dp(24));
     }
 
     private void setupFirebase() {
@@ -255,28 +294,23 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void applySystemNavigationInsets(View bottomNav) {
-        int baseScrollBottom = rootScroll.getPaddingBottom();
         int baseNavBottom = bottomNav.getPaddingBottom();
         int baseNavHeight = bottomNav.getLayoutParams().height;
 
         bottomNav.setOnApplyWindowInsetsListener((view, insets) -> {
-            int navigationBottom = insets.getSystemWindowInsetBottom();
+            navigationInsetBottom = insets.getSystemWindowInsetBottom();
 
             ViewGroup.LayoutParams params = view.getLayoutParams();
-            params.height = baseNavHeight + navigationBottom;
+            params.height = baseNavHeight + navigationInsetBottom;
             view.setLayoutParams(params);
 
             view.setPadding(
                     view.getPaddingLeft(),
                     view.getPaddingTop(),
                     view.getPaddingRight(),
-                    baseNavBottom + navigationBottom);
+                    baseNavBottom + navigationInsetBottom);
 
-            rootScroll.setPadding(
-                    rootScroll.getPaddingLeft(),
-                    rootScroll.getPaddingTop(),
-                    rootScroll.getPaddingRight(),
-                    baseScrollBottom + navigationBottom);
+            updateBottomNavigationSpacing();
 
             return insets;
         });
@@ -302,11 +336,19 @@ public class MainActivity extends AppCompatActivity {
             showMessage("Digite um código de barras para consultar.");
             return;
         }
-        showSearch();
-        loadProduct(code);
+        openProductDetails(code, TAB_SEARCH, null);
     }
 
-    private void loadProduct(String code) {
+    private void openProductDetails(String code, int returnTab, ProductInfo savedProduct) {
+        if (TextUtils.isEmpty(code)) {
+            return;
+        }
+        productReturnTab = returnTab;
+        showProductLoading(code);
+        loadProduct(code, savedProduct);
+    }
+
+    private void loadProduct(String code, ProductInfo savedProduct) {
         currentCode = code;
         setLoading(true);
         cardResult.setVisibility(View.GONE);
@@ -320,12 +362,24 @@ public class MainActivity extends AppCompatActivity {
                 }
                 setLoading(false);
                 if (result.errorMessage != null) {
-                    showMessage(result.errorMessage);
+                    if (savedProduct != null) {
+                        showProduct(savedProduct);
+                        addDetailNotice("Não foi possível atualizar os dados agora. Exibindo as informações salvas.");
+                    } else {
+                        showProductLoadError(result.errorMessage);
+                    }
                 } else if (result.product == null) {
-                    showMessage("Produto não encontrado. Confira o código ou tente escanear outro item.");
+                    if (savedProduct != null) {
+                        showProduct(savedProduct);
+                        addDetailNotice("Este produto não foi encontrado na consulta atual. Exibindo as informações salvas.");
+                    } else {
+                        showProductLoadError("Produto não encontrado. Confira o código ou tente escanear outro item.");
+                    }
                 } else {
                     addLocalItem(KEY_HISTORY, result.product);
-                    renderSearchRecentItems();
+                    if (isProductSaved(result.product.code)) {
+                        addLocalItem(KEY_SAVED_PRODUCTS, result.product);
+                    }
                     showProduct(result.product);
                 }
             });
@@ -377,6 +431,72 @@ public class MainActivity extends AppCompatActivity {
             product.nutriScore = readNutriScore(jsonProduct);
             product.score = calculateScore(product.nutriScore, jsonProduct);
             product.code = code;
+            product.quantity = firstNonEmpty(jsonProduct.optString("quantity"), "");
+            product.servingSize = firstNonEmpty(jsonProduct.optString("serving_size"), "");
+            product.ingredients = firstNonEmpty(
+                    jsonProduct.optString("ingredients_text_pt"),
+                    jsonProduct.optString("ingredients_text"),
+                    "");
+            product.allergens = firstNonEmpty(
+                    cleanDisplayList(jsonProduct.optString("allergens")),
+                    cleanDisplayList(jsonProduct.optString("allergens_from_ingredients")),
+                    readTagList(jsonProduct, "allergens_tags"));
+            product.traces = firstNonEmpty(
+                    cleanDisplayList(jsonProduct.optString("traces")),
+                    readTagList(jsonProduct, "traces_tags"));
+            product.categories = firstNonEmpty(
+                    cleanDisplayList(jsonProduct.optString("categories")),
+                    readTagList(jsonProduct, "categories_tags"));
+            product.labels = firstNonEmpty(
+                    cleanDisplayList(jsonProduct.optString("labels")),
+                    readTagList(jsonProduct, "labels_tags"));
+            product.origins = firstNonEmpty(
+                    cleanDisplayList(jsonProduct.optString("origins")),
+                    readTagList(jsonProduct, "origins_tags"));
+            product.manufacturingPlaces = cleanDisplayList(jsonProduct.optString("manufacturing_places"));
+            product.packaging = firstNonEmpty(
+                    cleanDisplayList(jsonProduct.optString("packaging")),
+                    readTagList(jsonProduct, "packaging_tags"));
+            product.countries = firstNonEmpty(
+                    cleanDisplayList(jsonProduct.optString("countries")),
+                    readTagList(jsonProduct, "countries_tags"));
+            product.additives = readTagList(jsonProduct, "additives_tags");
+
+            JSONObject nutriments = jsonProduct.optJSONObject("nutriments");
+            if (nutriments == null) {
+                nutriments = new JSONObject();
+            }
+            product.energyKcal = readFirstNutriment(
+                    nutriments,
+                    "energy-kcal_100g",
+                    "energy-kcal_value",
+                    "energy-kcal");
+            if (product.energyKcal < 0) {
+                double energyKj = readFirstNutriment(
+                        nutriments,
+                        "energy-kj_100g",
+                        "energy_100g",
+                        "energy-kj_value",
+                        "energy-kj");
+                product.energyKcal = energyKj >= 0 ? energyKj / 4.184 : -1;
+            }
+            product.fat = readFirstNutriment(nutriments, "fat_100g", "fat_value", "fat");
+            product.saturatedFat = readFirstNutriment(
+                    nutriments,
+                    "saturated-fat_100g",
+                    "saturated-fat_value",
+                    "saturated-fat");
+            product.carbohydrates = readFirstNutriment(
+                    nutriments,
+                    "carbohydrates_100g",
+                    "carbohydrates_value",
+                    "carbohydrates");
+            product.sugars = readFirstNutriment(nutriments, "sugars_100g", "sugars_value", "sugars");
+            product.fiber = readFirstNutriment(nutriments, "fiber_100g", "fiber_value", "fiber");
+            product.proteins = readFirstNutriment(nutriments, "proteins_100g", "proteins_value", "proteins");
+            product.salt = readFirstNutriment(nutriments, "salt_100g", "salt_value", "salt");
+            product.sodium = readFirstNutriment(nutriments, "sodium_100g", "sodium_value", "sodium");
+            product.novaGroup = readNovaGroup(jsonProduct, nutriments);
             return ProductResult.success(product);
         } catch (Exception exception) {
             return ProductResult.error("Não consegui buscar esse produto. Verifique a conexão e tente novamente.");
@@ -398,6 +518,49 @@ public class MainActivity extends AppCompatActivity {
             while ((line = reader.readLine()) != null) {
                 builder.append(line);
             }
+        }
+        return builder.toString();
+    }
+
+    private String readTagList(JSONObject product, String key) {
+        JSONArray tags = product.optJSONArray(key);
+        if (tags == null || tags.length() == 0) {
+            return "";
+        }
+        StringBuilder builder = new StringBuilder();
+        for (int index = 0; index < tags.length(); index++) {
+            String value = cleanDisplayList(tags.optString(index));
+            if (TextUtils.isEmpty(value)) {
+                continue;
+            }
+            if (builder.length() > 0) {
+                builder.append(", ");
+            }
+            builder.append(value);
+        }
+        return builder.toString();
+    }
+
+    private String cleanDisplayList(String value) {
+        if (TextUtils.isEmpty(value)) {
+            return "";
+        }
+        String[] entries = value.split(",");
+        StringBuilder builder = new StringBuilder();
+        for (String entry : entries) {
+            String cleaned = entry.trim()
+                    .replaceFirst("^[a-z]{2}:", "")
+                    .replace('_', ' ');
+            if (TextUtils.isEmpty(cleaned)) {
+                continue;
+            }
+            if (cleaned.matches("(?i)e[0-9]+.*")) {
+                cleaned = cleaned.toUpperCase(Locale.ROOT);
+            }
+            if (builder.length() > 0) {
+                builder.append(", ");
+            }
+            builder.append(cleaned);
         }
         return builder.toString();
     }
@@ -715,47 +878,386 @@ public class MainActivity extends AppCompatActivity {
         return builder.toString();
     }
 
-    private void showProduct(ProductInfo product) {
+    private void showProductLoading(String code) {
+        configureProductDetailScreen();
+        currentProduct = null;
+
+        TextView loading = new TextView(this);
+        loading.setText("Carregando informações do produto…");
+        loading.setTextColor(getColor(R.color.one_ui_text_secondary));
+        loading.setTextSize(15);
+        loading.setGravity(android.view.Gravity.CENTER);
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        params.setMargins(0, dp(56), 0, 0);
+        dynamicContent.addView(loading, params);
+        currentCode = code;
+    }
+
+    private void configureProductDetailScreen() {
         showingAppSettings = false;
-        currentProduct = product;
-        btnBack.setVisibility(View.GONE);
+        showingProductDetails = true;
+        updateNavigationState(productReturnTab);
+        setBottomNavigationVisible(false);
+        topHeader.setVisibility(View.VISIBLE);
+        btnBack.setVisibility(View.VISIBLE);
+        txtTitle.setText("Detalhes do produto");
+        txtTitle.setTextSize(24);
+        searchContainer.setVisibility(View.GONE);
+        filtersScroll.setVisibility(View.GONE);
         sectionHeader.setVisibility(View.GONE);
-        dynamicContent.setVisibility(View.GONE);
-        txtProductName.setText(product.name);
-        if (TextUtils.isEmpty(product.brand)) {
-            txtBrand.setVisibility(View.GONE);
-        } else {
-            txtBrand.setVisibility(View.VISIBLE);
-            txtBrand.setText(product.brand);
-        }
+        btnSort.setVisibility(View.GONE);
+        cardStatus.setVisibility(View.GONE);
+        cardResult.setVisibility(View.GONE);
+        txtFooter.setVisibility(View.GONE);
+        dynamicContent.removeAllViews();
+        dynamicContent.setVisibility(View.VISIBLE);
+        rootScroll.scrollTo(0, 0);
+    }
+
+    private void showProductLoadError(String message) {
+        configureProductDetailScreen();
+        setLoading(false);
+        addInfoCard("Não foi possível abrir o produto", message);
+
+        Button backButton = new Button(this);
+        backButton.setText("Voltar");
+        backButton.setAllCaps(false);
+        backButton.setTextColor(getColor(R.color.one_ui_text_primary));
+        backButton.setTextSize(14);
+        backButton.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        backButton.setBackgroundResource(R.drawable.bg_button_secondary);
+        backButton.setOnClickListener(view -> returnFromProductDetails());
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                dp(46));
+        params.setMargins(0, dp(8), 0, 0);
+        dynamicContent.addView(backButton, params);
+    }
+
+    private void addDetailNotice(String message) {
+        TextView notice = new TextView(this);
+        notice.setText(message);
+        notice.setTextColor(getColor(R.color.one_ui_text_secondary));
+        notice.setTextSize(12);
+        notice.setLineSpacing(dp(2), 1f);
+        notice.setBackgroundResource(R.drawable.bg_status_card);
+        notice.setPadding(dp(14), dp(12), dp(14), dp(12));
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        params.setMargins(0, dp(12), 0, 0);
+        dynamicContent.addView(notice, params);
+    }
+
+    private void showProduct(ProductInfo product) {
+        configureProductDetailScreen();
+        currentProduct = product;
+
+        LinearLayout hero = new LinearLayout(this);
+        hero.setOrientation(LinearLayout.HORIZONTAL);
+        hero.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        hero.setPadding(0, dp(8), 0, dp(8));
+
+        FrameLayout imageStack = new FrameLayout(this);
+        imgProduct = new ImageView(this);
+        imgProduct.setBackgroundResource(R.drawable.bg_product_image);
+        imgProduct.setContentDescription(getString(R.string.product_image));
+        imgProduct.setImageResource(R.drawable.ic_scan);
+        imgProduct.setColorFilter(getColor(R.color.one_ui_text_muted));
+        imgProduct.setPadding(dp(34), dp(34), dp(34), dp(34));
+        imgProduct.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+        FrameLayout.LayoutParams imageParams = new FrameLayout.LayoutParams(dp(118), dp(118));
+        imageParams.gravity = android.view.Gravity.START | android.view.Gravity.CENTER_VERTICAL;
+        imageStack.addView(imgProduct, imageParams);
+
+        txtScore = new TextView(this);
+        txtScore.setGravity(android.view.Gravity.CENTER);
+        txtScore.setTextColor(getColor(android.R.color.white));
+        txtScore.setTextSize(14);
+        txtScore.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        txtScore.setBackgroundResource(R.drawable.bg_score_circle);
+        FrameLayout.LayoutParams scoreParams = new FrameLayout.LayoutParams(dp(48), dp(48));
+        scoreParams.gravity = android.view.Gravity.TOP | android.view.Gravity.END;
+        imageStack.addView(txtScore, scoreParams);
+        hero.addView(imageStack, new LinearLayout.LayoutParams(dp(132), dp(126)));
+
+        LinearLayout identity = new LinearLayout(this);
+        identity.setOrientation(LinearLayout.VERTICAL);
+        identity.setPadding(dp(14), 0, 0, 0);
+
+        txtProductName = new TextView(this);
+        txtProductName.setText(firstNonEmpty(product.name, "Produto sem nome informado"));
+        txtProductName.setTextColor(getColor(R.color.one_ui_text_primary));
+        txtProductName.setTextSize(20);
+        txtProductName.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        txtProductName.setMaxLines(4);
+        identity.addView(txtProductName);
+
+        txtBrand = new TextView(this);
+        txtBrand.setText(firstNonEmpty(product.brand, "Marca não informada"));
+        txtBrand.setTextColor(getColor(R.color.one_ui_text_secondary));
+        txtBrand.setTextSize(14);
+        LinearLayout.LayoutParams brandParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        brandParams.setMargins(0, dp(4), 0, 0);
+        identity.addView(txtBrand, brandParams);
+
+        txtClassification = new TextView(this);
+        txtClassification.setText(product.score.hasScore
+                ? product.score.classification
+                : "Sem nota suficiente");
+        txtClassification.setTextColor(getColor(product.score.hasScore
+                ? scoreColorRes(product.score.value)
+                : R.color.one_ui_text_secondary));
+        txtClassification.setTextSize(14);
+        txtClassification.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        LinearLayout.LayoutParams classificationParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        classificationParams.setMargins(0, dp(10), 0, 0);
+        identity.addView(txtClassification, classificationParams);
+
+        txtNutriScore = new TextView(this);
+        txtNutriScore.setText(!TextUtils.isEmpty(product.nutriScore)
+                ? "Nutri-Score " + product.nutriScore.toUpperCase(Locale.ROOT)
+                : product.score.source);
+        txtNutriScore.setTextColor(getColor(R.color.one_ui_text_secondary));
+        txtNutriScore.setTextSize(12);
+        LinearLayout.LayoutParams sourceParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        sourceParams.setMargins(0, dp(3), 0, 0);
+        identity.addView(txtNutriScore, sourceParams);
+
+        hero.addView(identity, new LinearLayout.LayoutParams(
+                0,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                1));
+        dynamicContent.addView(hero, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
 
         if (product.score.hasScore) {
             txtScore.setText(String.valueOf(product.score.value));
-            txtClassification.setText(product.score.classification);
-            if (!TextUtils.isEmpty(product.nutriScore)) {
-                txtNutriScore.setText(String.format(Locale.getDefault(), "Nutri-Score %s", product.nutriScore.toUpperCase(Locale.ROOT)));
-            } else {
-                txtNutriScore.setText(product.score.source);
-            }
-            txtExplanation.setText(product.score.explanation);
             updateScoreColor(product.score.value);
         } else {
-            txtScore.setText("-");
-            txtClassification.setText("Sem nota suficiente");
-            txtNutriScore.setText("Nutri-Score não informado");
-            txtExplanation.setText("O Open Food Facts não trouxe Nutri-Score nem dados nutricionais suficientes para estimar uma nota com segurança.");
+            txtScore.setText("–");
             updateScoreColor(0);
         }
 
+        btnSaveProduct = new Button(this);
+        btnSaveProduct.setAllCaps(false);
+        btnSaveProduct.setTextSize(14);
+        btnSaveProduct.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        btnSaveProduct.setBackgroundResource(R.drawable.bg_button_secondary);
+        btnSaveProduct.setCompoundDrawablePadding(dp(8));
+        btnSaveProduct.setOnClickListener(view -> saveCurrentProduct());
+        LinearLayout.LayoutParams actionParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                dp(48));
+        actionParams.setMargins(0, dp(10), 0, dp(6));
+        dynamicContent.addView(btnSaveProduct, actionParams);
         updateSaveButtonState();
-        cardResult.setVisibility(View.VISIBLE);
-        if (TextUtils.isEmpty(product.imageUrl)) {
-            imgProduct.setImageDrawable(null);
-            imgProduct.setVisibility(View.GONE);
-        } else {
-            imgProduct.setImageDrawable(null);
-            imgProduct.setVisibility(View.VISIBLE);
+
+        LinearLayout assessment = createDetailSection("Avaliação");
+        txtExplanation = addDetailParagraph(
+                assessment,
+                "Como chegamos à nota",
+                product.score.hasScore
+                        ? product.score.explanation
+                        : "O Open Food Facts não trouxe Nutri-Score nem dados nutricionais suficientes para estimar uma nota com segurança.",
+                R.color.one_ui_text_secondary);
+        addDetailSection(assessment);
+
+        if (hasNutritionData(product)) {
+            LinearLayout nutrition = createDetailSection("Informação nutricional");
+            TextView basis = new TextView(this);
+            basis.setText("Valores por 100 g ou 100 ml");
+            basis.setTextColor(getColor(R.color.one_ui_text_muted));
+            basis.setTextSize(12);
+            LinearLayout.LayoutParams basisParams = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT);
+            basisParams.setMargins(0, 0, 0, dp(6));
+            nutrition.addView(basis, basisParams);
+            addNutrientRow(nutrition, "Energia", product.energyKcal, "kcal");
+            addNutrientRow(nutrition, "Gorduras", product.fat, "g");
+            addNutrientRow(nutrition, "Gorduras saturadas", product.saturatedFat, "g");
+            addNutrientRow(nutrition, "Carboidratos", product.carbohydrates, "g");
+            addNutrientRow(nutrition, "Açúcares", product.sugars, "g");
+            addNutrientRow(nutrition, "Fibras", product.fiber, "g");
+            addNutrientRow(nutrition, "Proteínas", product.proteins, "g");
+            addNutrientRow(nutrition, "Sal", product.salt, "g");
+            addNutrientRow(nutrition, "Sódio", product.sodium, "g");
+            addDetailSection(nutrition);
+        }
+
+        if (!TextUtils.isEmpty(product.ingredients)
+                || !TextUtils.isEmpty(product.allergens)
+                || !TextUtils.isEmpty(product.traces)) {
+            LinearLayout ingredients = createDetailSection("Ingredientes e alertas");
+            addOptionalDetailParagraph(ingredients, "Ingredientes", product.ingredients, R.color.one_ui_text_secondary);
+            addOptionalDetailParagraph(ingredients, "Alérgenos", product.allergens, R.color.one_ui_danger);
+            addOptionalDetailParagraph(ingredients, "Pode conter", product.traces, R.color.one_ui_warning);
+            addDetailSection(ingredients);
+        }
+
+        LinearLayout productData = createDetailSection("Sobre o produto");
+        addOptionalDetailRow(productData, "Código de barras", product.code);
+        addOptionalDetailRow(productData, "Quantidade", product.quantity);
+        addOptionalDetailRow(productData, "Porção", product.servingSize);
+        if (product.novaGroup > 0) {
+            addOptionalDetailRow(productData, "Processamento NOVA", novaDescription(product.novaGroup));
+        }
+        addOptionalDetailRow(productData, "Categorias", product.categories);
+        addOptionalDetailRow(productData, "Selos e características", product.labels);
+        addOptionalDetailRow(productData, "Aditivos", product.additives);
+        addOptionalDetailRow(productData, "Origem", product.origins);
+        addOptionalDetailRow(productData, "Fabricado em", product.manufacturingPlaces);
+        addOptionalDetailRow(productData, "Embalagem", product.packaging);
+        addOptionalDetailRow(productData, "Países de venda", product.countries);
+        addDetailSection(productData);
+
+        TextView footer = new TextView(this);
+        footer.setText("Dados fornecidos pelo Open Food Facts. A nota é uma orientação simples e não substitui recomendação médica.");
+        footer.setTextColor(getColor(R.color.one_ui_text_muted));
+        footer.setTextSize(12);
+        footer.setLineSpacing(dp(2), 1f);
+        LinearLayout.LayoutParams footerParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        footerParams.setMargins(0, dp(14), 0, dp(6));
+        dynamicContent.addView(footer, footerParams);
+
+        if (!TextUtils.isEmpty(product.imageUrl)) {
             loadImage(product.imageUrl, currentCode);
+        }
+    }
+
+    private LinearLayout createDetailSection(String titleText) {
+        LinearLayout section = new LinearLayout(this);
+        section.setOrientation(LinearLayout.VERTICAL);
+        section.setBackgroundResource(R.drawable.bg_card);
+        section.setPadding(dp(16), dp(14), dp(16), dp(14));
+
+        TextView title = new TextView(this);
+        title.setText(titleText);
+        title.setTextColor(getColor(R.color.one_ui_text_primary));
+        title.setTextSize(16);
+        title.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        params.setMargins(0, 0, 0, dp(8));
+        section.addView(title, params);
+        return section;
+    }
+
+    private void addDetailSection(LinearLayout section) {
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        params.setMargins(0, dp(10), 0, 0);
+        dynamicContent.addView(section, params);
+    }
+
+    private TextView addDetailParagraph(LinearLayout section, String labelText, String bodyText, int bodyColor) {
+        TextView label = new TextView(this);
+        label.setText(labelText);
+        label.setTextColor(getColor(R.color.one_ui_text_primary));
+        label.setTextSize(13);
+        label.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        section.addView(label);
+
+        TextView body = new TextView(this);
+        body.setText(bodyText);
+        body.setTextColor(getColor(bodyColor));
+        body.setTextSize(13);
+        body.setLineSpacing(dp(2), 1f);
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        params.setMargins(0, dp(3), 0, dp(8));
+        section.addView(body, params);
+        return body;
+    }
+
+    private void addOptionalDetailParagraph(LinearLayout section, String label, String value, int bodyColor) {
+        if (!TextUtils.isEmpty(value)) {
+            addDetailParagraph(section, label, value, bodyColor);
+        }
+    }
+
+    private void addNutrientRow(LinearLayout section, String labelText, double value, String unit) {
+        if (value < 0) {
+            return;
+        }
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        row.setPadding(0, dp(7), 0, dp(7));
+
+        TextView label = new TextView(this);
+        label.setText(labelText);
+        label.setTextColor(getColor(R.color.one_ui_text_secondary));
+        label.setTextSize(13);
+        row.addView(label, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+
+        TextView amount = new TextView(this);
+        amount.setText(formatNutritionValue(value, unit));
+        amount.setTextColor(getColor(R.color.one_ui_text_primary));
+        amount.setTextSize(13);
+        amount.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        row.addView(amount);
+        section.addView(row);
+    }
+
+    private void addOptionalDetailRow(LinearLayout section, String labelText, String value) {
+        if (TextUtils.isEmpty(value)) {
+            return;
+        }
+        addDetailParagraph(section, labelText, value, R.color.one_ui_text_secondary);
+    }
+
+    private boolean hasNutritionData(ProductInfo product) {
+        return product.energyKcal >= 0
+                || product.fat >= 0
+                || product.saturatedFat >= 0
+                || product.carbohydrates >= 0
+                || product.sugars >= 0
+                || product.fiber >= 0
+                || product.proteins >= 0
+                || product.salt >= 0
+                || product.sodium >= 0;
+    }
+
+    private String formatNutritionValue(double value, String unit) {
+        String formatted;
+        if (Math.abs(value - Math.rint(value)) < 0.01) {
+            formatted = String.format(Locale.getDefault(), "%.0f", value);
+        } else if (value < 1) {
+            formatted = String.format(Locale.getDefault(), "%.2f", value);
+        } else {
+            formatted = String.format(Locale.getDefault(), "%.1f", value);
+        }
+        return formatted + " " + unit;
+    }
+
+    private String novaDescription(int group) {
+        switch (group) {
+            case 1:
+                return "1 · Não processado ou minimamente processado";
+            case 2:
+                return "2 · Ingrediente culinário processado";
+            case 3:
+                return "3 · Alimento processado";
+            case 4:
+                return "4 · Ultraprocessado";
+            default:
+                return String.valueOf(group);
         }
     }
 
@@ -786,10 +1288,11 @@ public class MainActivity extends AppCompatActivity {
                     return;
                 }
                 if (finalBitmap != null) {
+                    imgProduct.clearColorFilter();
+                    imgProduct.setPadding(0, 0, 0, 0);
+                    imgProduct.setScaleType(ImageView.ScaleType.CENTER_CROP);
                     imgProduct.setImageBitmap(finalBitmap);
                     imgProduct.setVisibility(View.VISIBLE);
-                } else {
-                    imgProduct.setVisibility(View.GONE);
                 }
             });
         });
@@ -825,17 +1328,25 @@ public class MainActivity extends AppCompatActivity {
 
     private void showSearch() {
         showingAppSettings = false;
+        showingProductDetails = false;
+        currentCode = "";
+        setLoading(false);
+        setBottomNavigationVisible(true);
         updateNavigationState(TAB_SEARCH);
         topHeader.setVisibility(View.VISIBLE);
         btnBack.setVisibility(View.GONE);
         sectionHeader.setVisibility(View.VISIBLE);
         txtTitle.setText("Busca");
+        txtTitle.setTextSize(30);
         searchContainer.setVisibility(View.VISIBLE);
         filtersScroll.setVisibility(View.GONE);
         btnSort.setVisibility(View.GONE);
         dynamicContent.setVisibility(View.VISIBLE);
         cardStatus.setVisibility(View.GONE);
+        cardResult.setVisibility(View.GONE);
+        txtFooter.setVisibility(View.VISIBLE);
         renderSearchRecentItems();
+        rootScroll.scrollTo(0, 0);
     }
 
     private void renderSearchRecentItems() {
@@ -863,6 +1374,10 @@ public class MainActivity extends AppCompatActivity {
 
     private void showProfile() {
         showingAppSettings = false;
+        showingProductDetails = false;
+        currentCode = "";
+        setLoading(false);
+        setBottomNavigationVisible(true);
         updateNavigationState(TAB_PROFILE);
         topHeader.setVisibility(View.GONE);
         btnBack.setVisibility(View.GONE);
@@ -872,6 +1387,7 @@ public class MainActivity extends AppCompatActivity {
         btnSort.setVisibility(View.GONE);
         cardStatus.setVisibility(View.GONE);
         cardResult.setVisibility(View.GONE);
+        txtFooter.setVisibility(View.GONE);
         dynamicContent.removeAllViews();
         dynamicContent.setVisibility(View.VISIBLE);
 
@@ -886,16 +1402,22 @@ public class MainActivity extends AppCompatActivity {
 
     private void showAppSettings() {
         showingAppSettings = true;
+        showingProductDetails = false;
+        currentCode = "";
+        setLoading(false);
+        setBottomNavigationVisible(true);
         updateNavigationState(TAB_PROFILE);
         topHeader.setVisibility(View.VISIBLE);
         btnBack.setVisibility(View.VISIBLE);
         sectionHeader.setVisibility(View.GONE);
         txtTitle.setText("Configurações");
+        txtTitle.setTextSize(30);
         searchContainer.setVisibility(View.GONE);
         filtersScroll.setVisibility(View.GONE);
         btnSort.setVisibility(View.GONE);
         cardStatus.setVisibility(View.GONE);
         cardResult.setVisibility(View.GONE);
+        txtFooter.setVisibility(View.GONE);
         dynamicContent.removeAllViews();
         dynamicContent.setVisibility(View.VISIBLE);
 
@@ -905,6 +1427,10 @@ public class MainActivity extends AppCompatActivity {
 
     private void showLocalList(String title, String sectionTitle, String key, String emptyMessage) {
         showingAppSettings = false;
+        showingProductDetails = false;
+        currentCode = "";
+        setLoading(false);
+        setBottomNavigationVisible(true);
         currentListTitle = title;
         currentListSectionTitle = sectionTitle;
         currentListKey = key;
@@ -913,11 +1439,13 @@ public class MainActivity extends AppCompatActivity {
         btnBack.setVisibility(View.GONE);
         sectionHeader.setVisibility(View.VISIBLE);
         txtTitle.setText(title);
+        txtTitle.setTextSize(30);
         searchContainer.setVisibility(View.GONE);
         filtersScroll.setVisibility(View.GONE);
         btnSort.setVisibility(View.VISIBLE);
         cardStatus.setVisibility(View.GONE);
         cardResult.setVisibility(View.GONE);
+        txtFooter.setVisibility(View.VISIBLE);
         dynamicContent.setVisibility(View.VISIBLE);
 
         renderLocalList(title, sectionTitle, key, emptyMessage, readLocalItems(key));
@@ -966,7 +1494,16 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void addHistoryRow(JSONObject item) {
+        addCompactProductRow(item, TAB_SEARCH, false);
+    }
+
+    private void addProductRow(JSONObject item) {
+        addCompactProductRow(item, TAB_LISTS, true);
+    }
+
+    private void addCompactProductRow(JSONObject item, int returnTab, boolean showRemoveButton) {
         String code = item.optString("code");
+        ProductInfo savedProduct = productFromJson(item);
         String name = firstNonEmpty(item.optString("name"), "Produto sem nome");
         String brand = firstNonEmpty(item.optString("brand"), "Marca não informada");
         String classification = firstNonEmpty(item.optString("classification"), "Sem nota suficiente");
@@ -977,11 +1514,7 @@ public class MainActivity extends AppCompatActivity {
         row.setGravity(android.view.Gravity.CENTER_VERTICAL);
         row.setBackgroundResource(R.drawable.bg_result_row);
         row.setPadding(dp(6), dp(6), dp(6), dp(6));
-        row.setOnClickListener(view -> {
-            showSearch();
-            editBarcode.setText(code);
-            loadProduct(code);
-        });
+        row.setOnClickListener(view -> openProductDetails(code, returnTab, savedProduct));
 
         TextView scoreView = new TextView(this);
         scoreView.setGravity(android.view.Gravity.CENTER);
@@ -1017,73 +1550,13 @@ public class MainActivity extends AppCompatActivity {
 
         row.addView(texts, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
 
-        LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT);
-        rowParams.setMargins(0, 0, 0, dp(1));
-        dynamicContent.addView(row, rowParams);
-    }
-
-    private void addProductRow(JSONObject item) {
-        String code = item.optString("code");
-        String name = firstNonEmpty(item.optString("name"), "Produto sem nome");
-        String brand = firstNonEmpty(item.optString("brand"), "Marca não informada");
-        String classification = firstNonEmpty(item.optString("classification"), "Sem nota suficiente");
-        String score = item.optString("score");
-
-        LinearLayout row = new LinearLayout(this);
-        row.setOrientation(LinearLayout.HORIZONTAL);
-        row.setGravity(android.view.Gravity.CENTER_VERTICAL);
-        row.setBackgroundResource(R.drawable.bg_result_row);
-        row.setPadding(dp(8), dp(7), dp(8), dp(7));
-        row.setOnClickListener(view -> {
-            showSearch();
-            editBarcode.setText(code);
-            loadProduct(code);
-        });
-
-        TextView scoreView = new TextView(this);
-        scoreView.setGravity(android.view.Gravity.CENTER);
-        scoreView.setText(TextUtils.isEmpty(score) ? "-" : score);
-        scoreView.setTextColor(getColor(android.R.color.white));
-        scoreView.setTextSize(13);
-        scoreView.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
-        scoreView.setBackgroundResource(R.drawable.bg_score_circle);
-        if (scoreView.getBackground() instanceof GradientDrawable) {
-            GradientDrawable background = (GradientDrawable) scoreView.getBackground().mutate();
-            background.setColor(getColor(scoreColorRes(parseScore(score))));
-        }
-        LinearLayout.LayoutParams scoreParams = new LinearLayout.LayoutParams(dp(44), dp(44));
-        row.addView(scoreView, scoreParams);
-
-        LinearLayout texts = new LinearLayout(this);
-        texts.setOrientation(LinearLayout.VERTICAL);
-        texts.setPadding(dp(10), 0, 0, 0);
-
-        TextView title = new TextView(this);
-        title.setText(name);
-        title.setTextColor(getColor(R.color.one_ui_text_primary));
-        title.setTextSize(15);
-        title.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
-        title.setMaxLines(2);
-        texts.addView(title);
-
-        TextView subtitle = new TextView(this);
-        subtitle.setText(brand + " · " + classification);
-        subtitle.setTextColor(getColor(R.color.one_ui_text_secondary));
-        subtitle.setTextSize(12);
-        subtitle.setMaxLines(1);
-        texts.addView(subtitle);
-
-        row.addView(texts, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
-
-        if (KEY_SAVED_PRODUCTS.equals(currentListKey)) {
+        if (showRemoveButton) {
             ImageButton removeButton = new ImageButton(this);
             removeButton.setImageResource(R.drawable.ic_delete);
             removeButton.setColorFilter(getColor(R.color.one_ui_danger));
             removeButton.setBackgroundResource(R.drawable.bg_icon_action);
             removeButton.setContentDescription("Remover da lista");
-            removeButton.setPadding(dp(8), dp(8), dp(8), dp(8));
+            removeButton.setPadding(dp(7), dp(7), dp(7), dp(7));
             removeButton.setOnClickListener(view -> showRemoveSavedProductConfirmation(code, name, () -> {
                 renderLocalList(
                         currentListTitle,
@@ -1095,15 +1568,15 @@ public class MainActivity extends AppCompatActivity {
                     updateSaveButtonState();
                 }
             }));
-            LinearLayout.LayoutParams removeParams = new LinearLayout.LayoutParams(dp(40), dp(40));
-            removeParams.setMargins(dp(6), 0, 0, 0);
+            LinearLayout.LayoutParams removeParams = new LinearLayout.LayoutParams(dp(36), dp(36));
+            removeParams.setMargins(dp(4), 0, 0, 0);
             row.addView(removeButton, removeParams);
         }
 
         LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT);
-        rowParams.setMargins(0, 0, 0, dp(6));
+        rowParams.setMargins(0, 0, 0, dp(1));
         dynamicContent.addView(row, rowParams);
     }
 
@@ -1750,7 +2223,16 @@ public class MainActivity extends AppCompatActivity {
         if (btnSaveProduct == null || currentProduct == null || TextUtils.isEmpty(currentProduct.code)) {
             return;
         }
-        btnSaveProduct.setText(isProductSaved(currentProduct.code) ? "Remover" : "Salvar");
+        boolean saved = isProductSaved(currentProduct.code);
+        btnSaveProduct.setText(saved ? "Remover da lista" : "Salvar na lista");
+        btnSaveProduct.setTextColor(getColor(saved ? R.color.one_ui_danger : R.color.one_ui_accent));
+        btnSaveProduct.setCompoundDrawablesWithIntrinsicBounds(
+                saved ? R.drawable.ic_delete : R.drawable.ic_star,
+                0,
+                0,
+                0);
+        btnSaveProduct.setCompoundDrawableTintList(android.content.res.ColorStateList.valueOf(
+                getColor(saved ? R.color.one_ui_danger : R.color.one_ui_accent)));
     }
 
     private boolean isProductSaved(String code) {
@@ -1809,6 +2291,28 @@ public class MainActivity extends AppCompatActivity {
             json.put("score", product.score.hasScore ? String.valueOf(product.score.value) : "");
             json.put("scoreSource", product.score.source);
             json.put("explanation", product.score.explanation);
+            json.put("quantity", product.quantity);
+            json.put("servingSize", product.servingSize);
+            json.put("ingredients", product.ingredients);
+            json.put("allergens", product.allergens);
+            json.put("traces", product.traces);
+            json.put("categories", product.categories);
+            json.put("labels", product.labels);
+            json.put("origins", product.origins);
+            json.put("manufacturingPlaces", product.manufacturingPlaces);
+            json.put("packaging", product.packaging);
+            json.put("countries", product.countries);
+            json.put("additives", product.additives);
+            json.put("novaGroup", product.novaGroup);
+            json.put("energyKcal", product.energyKcal);
+            json.put("fat", product.fat);
+            json.put("saturatedFat", product.saturatedFat);
+            json.put("carbohydrates", product.carbohydrates);
+            json.put("sugars", product.sugars);
+            json.put("fiber", product.fiber);
+            json.put("proteins", product.proteins);
+            json.put("salt", product.salt);
+            json.put("sodium", product.sodium);
         } catch (Exception ignored) {
         }
         return json;
@@ -1825,6 +2329,28 @@ public class MainActivity extends AppCompatActivity {
         map.put("score", product.score != null && product.score.hasScore ? product.score.value : -1);
         map.put("scoreSource", product.score != null ? firstNonEmpty(product.score.source, "") : "");
         map.put("explanation", product.score != null ? firstNonEmpty(product.score.explanation, "") : "");
+        map.put("quantity", firstNonEmpty(product.quantity, ""));
+        map.put("servingSize", firstNonEmpty(product.servingSize, ""));
+        map.put("ingredients", firstNonEmpty(product.ingredients, ""));
+        map.put("allergens", firstNonEmpty(product.allergens, ""));
+        map.put("traces", firstNonEmpty(product.traces, ""));
+        map.put("categories", firstNonEmpty(product.categories, ""));
+        map.put("labels", firstNonEmpty(product.labels, ""));
+        map.put("origins", firstNonEmpty(product.origins, ""));
+        map.put("manufacturingPlaces", firstNonEmpty(product.manufacturingPlaces, ""));
+        map.put("packaging", firstNonEmpty(product.packaging, ""));
+        map.put("countries", firstNonEmpty(product.countries, ""));
+        map.put("additives", firstNonEmpty(product.additives, ""));
+        map.put("novaGroup", product.novaGroup);
+        map.put("energyKcal", product.energyKcal);
+        map.put("fat", product.fat);
+        map.put("saturatedFat", product.saturatedFat);
+        map.put("carbohydrates", product.carbohydrates);
+        map.put("sugars", product.sugars);
+        map.put("fiber", product.fiber);
+        map.put("proteins", product.proteins);
+        map.put("salt", product.salt);
+        map.put("sodium", product.sodium);
         map.put("updatedAt", System.currentTimeMillis());
         return map;
     }
@@ -1889,8 +2415,31 @@ public class MainActivity extends AppCompatActivity {
         product.brand = item.optString("brand");
         product.imageUrl = item.optString("imageUrl");
         product.nutriScore = item.optString("nutriScore");
-        int score = parseScore(item.optString("score"));
-        product.score = score > 0
+        product.quantity = item.optString("quantity");
+        product.servingSize = item.optString("servingSize");
+        product.ingredients = item.optString("ingredients");
+        product.allergens = item.optString("allergens");
+        product.traces = item.optString("traces");
+        product.categories = item.optString("categories");
+        product.labels = item.optString("labels");
+        product.origins = item.optString("origins");
+        product.manufacturingPlaces = item.optString("manufacturingPlaces");
+        product.packaging = item.optString("packaging");
+        product.countries = item.optString("countries");
+        product.additives = item.optString("additives");
+        product.novaGroup = item.optInt("novaGroup", 0);
+        product.energyKcal = item.optDouble("energyKcal", -1);
+        product.fat = item.optDouble("fat", -1);
+        product.saturatedFat = item.optDouble("saturatedFat", -1);
+        product.carbohydrates = item.optDouble("carbohydrates", -1);
+        product.sugars = item.optDouble("sugars", -1);
+        product.fiber = item.optDouble("fiber", -1);
+        product.proteins = item.optDouble("proteins", -1);
+        product.salt = item.optDouble("salt", -1);
+        product.sodium = item.optDouble("sodium", -1);
+        String savedScore = item.optString("score");
+        int score = parseScore(savedScore);
+        product.score = !TextUtils.isEmpty(savedScore) && score >= 0
                 ? ScoreInfo.withScore(
                         score,
                         firstNonEmpty(item.optString("classification"), classificationForScore(score)),
@@ -1942,11 +2491,19 @@ public class MainActivity extends AppCompatActivity {
                     JSONArray items = documentsToJson(snapshot.getDocuments());
                     JSONArray mergedItems = mergeAndSaveLocalItems(key, items);
 
-                    renderLocalList(title, sectionTitle, key, emptyMessage, mergedItems);
+                    if (!showingProductDetails
+                            && activeTab == TAB_LISTS
+                            && key.equals(currentListKey)) {
+                        renderLocalList(title, sectionTitle, key, emptyMessage, mergedItems);
+                    }
                 })
                 .addOnFailureListener(exception -> {
-                    txtSectionMeta.setText("Erro de sync");
-                    showMessage("Não consegui ler a nuvem. No Firebase, confira se o Firestore foi criado e se as regras permitem o usuário autenticado.");
+                    if (!showingProductDetails
+                            && activeTab == TAB_LISTS
+                            && key.equals(currentListKey)) {
+                        txtSectionMeta.setText("Erro de sync");
+                        showMessage("Não consegui ler a nuvem. No Firebase, confira se o Firestore foi criado e se as regras permitem o usuário autenticado.");
+                    }
                 });
     }
 
@@ -1963,13 +2520,41 @@ public class MainActivity extends AppCompatActivity {
                 item.put("classification", firstNonEmpty(document.getString("classification"), "Sem nota suficiente"));
                 item.put("scoreSource", firstNonEmpty(document.getString("scoreSource"), ""));
                 item.put("explanation", firstNonEmpty(document.getString("explanation"), ""));
+                item.put("quantity", firstNonEmpty(document.getString("quantity"), ""));
+                item.put("servingSize", firstNonEmpty(document.getString("servingSize"), ""));
+                item.put("ingredients", firstNonEmpty(document.getString("ingredients"), ""));
+                item.put("allergens", firstNonEmpty(document.getString("allergens"), ""));
+                item.put("traces", firstNonEmpty(document.getString("traces"), ""));
+                item.put("categories", firstNonEmpty(document.getString("categories"), ""));
+                item.put("labels", firstNonEmpty(document.getString("labels"), ""));
+                item.put("origins", firstNonEmpty(document.getString("origins"), ""));
+                item.put("manufacturingPlaces", firstNonEmpty(document.getString("manufacturingPlaces"), ""));
+                item.put("packaging", firstNonEmpty(document.getString("packaging"), ""));
+                item.put("countries", firstNonEmpty(document.getString("countries"), ""));
+                item.put("additives", firstNonEmpty(document.getString("additives"), ""));
+                Long novaGroup = document.getLong("novaGroup");
+                item.put("novaGroup", novaGroup != null ? novaGroup : 0);
+                putDocumentNumber(item, document, "energyKcal");
+                putDocumentNumber(item, document, "fat");
+                putDocumentNumber(item, document, "saturatedFat");
+                putDocumentNumber(item, document, "carbohydrates");
+                putDocumentNumber(item, document, "sugars");
+                putDocumentNumber(item, document, "fiber");
+                putDocumentNumber(item, document, "proteins");
+                putDocumentNumber(item, document, "salt");
+                putDocumentNumber(item, document, "sodium");
                 Long score = document.getLong("score");
-                item.put("score", score != null && score > 0 ? String.valueOf(score) : "");
+                item.put("score", score != null && score >= 0 ? String.valueOf(score) : "");
                 items.put(item);
             } catch (Exception ignored) {
             }
         }
         return items;
+    }
+
+    private void putDocumentNumber(JSONObject item, DocumentSnapshot document, String key) throws Exception {
+        Double value = document.getDouble(key);
+        item.put(key, value != null ? value : -1);
     }
 
     private JSONArray mergeAndSaveLocalItems(String key, JSONArray cloudItems) {
@@ -2147,7 +2732,7 @@ public class MainActivity extends AppCompatActivity {
             String contents = data != null ? data.getStringExtra(ScannerActivity.EXTRA_BARCODE) : null;
             if (resultCode == RESULT_OK && !TextUtils.isEmpty(contents)) {
                 editBarcode.setText(contents);
-                loadProduct(contents);
+                openProductDetails(contents, activeTab, null);
             } else {
                 showMessage("Leitura cancelada. Você pode tentar novamente ou digitar o código.");
             }
@@ -2166,13 +2751,30 @@ public class MainActivity extends AppCompatActivity {
         super.onActivityResult(requestCode, resultCode, data);
     }
 
-    @Override
-    public void onBackPressed() {
+    private boolean handleBackNavigation() {
+        if (showingProductDetails) {
+            returnFromProductDetails();
+            return true;
+        }
         if (showingAppSettings) {
             showProfile();
-            return;
+            return true;
         }
-        super.onBackPressed();
+        return false;
+    }
+
+    private void returnFromProductDetails() {
+        showingProductDetails = false;
+        currentCode = "";
+        currentProduct = null;
+        setLoading(false);
+        if (productReturnTab == TAB_LISTS) {
+            showSavedProducts();
+        } else if (productReturnTab == TAB_PROFILE) {
+            showProfile();
+        } else {
+            showSearch();
+        }
     }
 
     private void firebaseAuthWithGoogle(GoogleSignInAccount account) {
@@ -2228,6 +2830,28 @@ public class MainActivity extends AppCompatActivity {
         String brand;
         String imageUrl;
         String nutriScore;
+        String quantity;
+        String servingSize;
+        String ingredients;
+        String allergens;
+        String traces;
+        String categories;
+        String labels;
+        String origins;
+        String manufacturingPlaces;
+        String packaging;
+        String countries;
+        String additives;
+        int novaGroup;
+        double energyKcal = -1;
+        double fat = -1;
+        double saturatedFat = -1;
+        double carbohydrates = -1;
+        double sugars = -1;
+        double fiber = -1;
+        double proteins = -1;
+        double salt = -1;
+        double sodium = -1;
         ScoreInfo score;
     }
 

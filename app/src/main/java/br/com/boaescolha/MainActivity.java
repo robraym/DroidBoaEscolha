@@ -14,11 +14,14 @@ import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.text.Editable;
 import android.text.TextUtils;
+import android.text.TextWatcher;
 import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.inputmethod.EditorInfo;
+import android.view.inputmethod.InputMethodManager;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.FrameLayout;
@@ -58,6 +61,7 @@ import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.text.Normalizer;
 import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
@@ -103,7 +107,7 @@ public class MainActivity extends AppCompatActivity {
     private LinearLayout dynamicContent;
     private TextView txtSectionTitle;
     private TextView txtSectionMeta;
-    private EditText editBarcode;
+    private EditText editSearch;
     private ProgressBar progress;
     private View cardStatus;
     private TextView txtStatus;
@@ -139,6 +143,9 @@ public class MainActivity extends AppCompatActivity {
     private int productReturnTab = TAB_SEARCH;
     private int activeTab = TAB_SEARCH;
     private int navigationInsetBottom;
+    private String searchQuery = "";
+    private String listSearchQuery = "";
+    private boolean suppressSearchUpdates;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -158,7 +165,7 @@ public class MainActivity extends AppCompatActivity {
         dynamicContent = findViewById(R.id.dynamicContent);
         txtSectionTitle = findViewById(R.id.txtSectionTitle);
         txtSectionMeta = findViewById(R.id.txtSectionMeta);
-        editBarcode = findViewById(R.id.editBarcode);
+        editSearch = findViewById(R.id.editSearch);
         progress = findViewById(R.id.progress);
         cardStatus = findViewById(R.id.cardStatus);
         txtStatus = findViewById(R.id.txtStatus);
@@ -173,7 +180,7 @@ public class MainActivity extends AppCompatActivity {
         txtExplanation = findViewById(R.id.txtExplanation);
 
         View btnScan = findViewById(R.id.btnScan);
-        View btnManual = findViewById(R.id.btnManual);
+        View btnSearch = findViewById(R.id.btnSearch);
         btnSaveProduct = findViewById(R.id.btnSaveProduct);
         bottomNav = findViewById(R.id.bottomNav);
         indicatorSearch = findViewById(R.id.indicatorSearch);
@@ -189,7 +196,7 @@ public class MainActivity extends AppCompatActivity {
         applySystemNavigationInsets(bottomNav);
 
         btnScan.setOnClickListener(view -> startScanner());
-        btnManual.setOnClickListener(view -> searchManualCode());
+        btnSearch.setOnClickListener(view -> hideKeyboard());
         btnSaveProduct.setOnClickListener(view -> saveCurrentProduct());
         btnSort.setOnClickListener(view -> showSortMenu());
         btnBack.setOnClickListener(view -> handleBackNavigation());
@@ -204,15 +211,43 @@ public class MainActivity extends AppCompatActivity {
                 }
             }
         });
-        editBarcode.setOnEditorActionListener((view, actionId, event) -> {
+        editSearch.setOnEditorActionListener((view, actionId, event) -> {
             boolean enterPressed = event != null
                     && event.getKeyCode() == KeyEvent.KEYCODE_ENTER
                     && event.getAction() == KeyEvent.ACTION_UP;
             if (actionId == EditorInfo.IME_ACTION_SEARCH || enterPressed) {
-                searchManualCode();
+                hideKeyboard();
                 return true;
             }
             return false;
+        });
+        editSearch.addTextChangedListener(new TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence text, int start, int count, int after) {
+            }
+
+            @Override
+            public void onTextChanged(CharSequence text, int start, int before, int count) {
+            }
+
+            @Override
+            public void afterTextChanged(Editable text) {
+                if (suppressSearchUpdates || showingProductDetails) {
+                    return;
+                }
+                if (activeTab == TAB_SEARCH && !showingProductDetails) {
+                    searchQuery = text.toString();
+                    renderSearchRecentItems();
+                } else if (activeTab == TAB_LISTS && !TextUtils.isEmpty(currentListKey)) {
+                    listSearchQuery = text.toString();
+                    renderLocalList(
+                            currentListTitle,
+                            currentListSectionTitle,
+                            currentListKey,
+                            currentListEmptyMessage,
+                            readLocalItems(currentListKey));
+                }
+            }
         });
         String restoreScreen = getPrefs().getString(KEY_RESTORE_SCREEN, "");
         if (SCREEN_SETTINGS.equals(restoreScreen)) {
@@ -330,13 +365,22 @@ public class MainActivity extends AppCompatActivity {
         startActivityForResult(intent, REQUEST_BARCODE_SCAN);
     }
 
-    private void searchManualCode() {
-        String code = editBarcode.getText().toString().trim();
-        if (TextUtils.isEmpty(code)) {
-            showMessage("Digite um código de barras para consultar.");
-            return;
+    private void hideKeyboard() {
+        InputMethodManager keyboard = (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
+        if (keyboard != null) {
+            keyboard.hideSoftInputFromWindow(editSearch.getWindowToken(), 0);
         }
-        openProductDetails(code, TAB_SEARCH, null);
+        editSearch.clearFocus();
+    }
+
+    private void configureSearchInput(String hint, String value) {
+        suppressSearchUpdates = true;
+        editSearch.setHint(hint);
+        if (!TextUtils.equals(editSearch.getText().toString(), value)) {
+            editSearch.setText(value);
+            editSearch.setSelection(editSearch.length());
+        }
+        suppressSearchUpdates = false;
     }
 
     private void openProductDetails(String code, int returnTab, ProductInfo savedProduct) {
@@ -1298,22 +1342,6 @@ public class MainActivity extends AppCompatActivity {
         });
     }
 
-    private void resetResult() {
-        currentCode = "";
-        currentProduct = null;
-        editBarcode.setText("");
-        cardResult.setVisibility(View.GONE);
-        cardStatus.setVisibility(View.GONE);
-        setLoading(false);
-        editBarcode.requestFocus();
-    }
-
-    private void scanAnotherProduct() {
-        resetResult();
-        showSearch();
-        startScanner();
-    }
-
     private void setLoading(boolean loading) {
         progress.setVisibility(loading ? View.VISIBLE : View.GONE);
     }
@@ -1339,6 +1367,7 @@ public class MainActivity extends AppCompatActivity {
         txtTitle.setText("Busca");
         txtTitle.setTextSize(30);
         searchContainer.setVisibility(View.VISIBLE);
+        configureSearchInput("Buscar nos recentes", searchQuery);
         filtersScroll.setVisibility(View.GONE);
         btnSort.setVisibility(View.GONE);
         dynamicContent.setVisibility(View.VISIBLE);
@@ -1350,21 +1379,55 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void renderSearchRecentItems() {
-        txtSectionTitle.setText("Recentes");
-        JSONArray items = readLocalItems(KEY_HISTORY);
-        txtSectionMeta.setText(items.length() + " itens");
+        String query = normalizeSearchText(searchQuery);
+        JSONArray localItems = readLocalItems(KEY_HISTORY);
+        JSONArray visibleItems = filterItemsByNameOrBrand(localItems, query);
+
+        boolean filtering = !TextUtils.isEmpty(query);
+        txtSectionTitle.setText(filtering ? "Resultados" : "Recentes");
+        int displayCount = filtering ? visibleItems.length() : Math.min(visibleItems.length(), 6);
+        txtSectionMeta.setText(displayCount + (displayCount == 1 ? " item" : " itens"));
         dynamicContent.removeAllViews();
-        if (items.length() == 0) {
-            addInfoCard("Recentes", "Os produtos consultados aparecem aqui.");
+        if (visibleItems.length() == 0) {
+            if (filtering) {
+                addInfoCard("Nenhum resultado", "Nenhum produto recente corresponde ao nome ou marca digitados.");
+            } else {
+                addInfoCard("Recentes", "Os produtos consultados aparecem aqui.");
+            }
             return;
         }
-        int limit = Math.min(items.length(), 6);
+        int limit = filtering ? visibleItems.length() : Math.min(visibleItems.length(), 6);
         for (int index = 0; index < limit; index++) {
-            JSONObject item = items.optJSONObject(index);
+            JSONObject item = visibleItems.optJSONObject(index);
             if (item != null) {
                 addHistoryRow(item);
             }
         }
+    }
+
+    private String normalizeSearchText(String value) {
+        if (TextUtils.isEmpty(value)) {
+            return "";
+        }
+        String normalized = Normalizer.normalize(value, Normalizer.Form.NFD)
+                .replaceAll("\\p{M}+", "");
+        return normalized.toLowerCase(Locale.ROOT).trim();
+    }
+
+    private JSONArray filterItemsByNameOrBrand(JSONArray items, String normalizedQuery) {
+        JSONArray filtered = new JSONArray();
+        for (int index = 0; index < items.length(); index++) {
+            JSONObject item = items.optJSONObject(index);
+            if (item == null) {
+                continue;
+            }
+            String searchableText = normalizeSearchText(
+                    item.optString("name") + " " + item.optString("brand"));
+            if (TextUtils.isEmpty(normalizedQuery) || searchableText.contains(normalizedQuery)) {
+                filtered.put(item);
+            }
+        }
+        return filtered;
     }
 
     private void showSavedProducts() {
@@ -1440,7 +1503,8 @@ public class MainActivity extends AppCompatActivity {
         sectionHeader.setVisibility(View.VISIBLE);
         txtTitle.setText(title);
         txtTitle.setTextSize(30);
-        searchContainer.setVisibility(View.GONE);
+        searchContainer.setVisibility(View.VISIBLE);
+        configureSearchInput("Buscar na minha lista", listSearchQuery);
         filtersScroll.setVisibility(View.GONE);
         btnSort.setVisibility(View.VISIBLE);
         cardStatus.setVisibility(View.GONE);
@@ -1473,12 +1537,19 @@ public class MainActivity extends AppCompatActivity {
 
     private void renderLocalList(String title, String sectionTitle, String key, String emptyMessage, JSONArray rawItems) {
         txtTitle.setText(title);
-        txtSectionTitle.setText(sectionTitle);
-        JSONArray items = sortItemsByScore(rawItems, sortHighestFirst);
+        String query = normalizeSearchText(listSearchQuery);
+        boolean filtering = !TextUtils.isEmpty(query);
+        txtSectionTitle.setText(filtering ? "Resultados" : sectionTitle);
+        JSONArray filteredItems = filterItemsByNameOrBrand(rawItems, query);
+        JSONArray items = sortItemsByScore(filteredItems, sortHighestFirst);
         txtSectionMeta.setText(items.length() + " itens" + (KEY_HISTORY.equals(key) ? "" : " · " + (sortHighestFirst ? "maior nota" : "menor nota")));
         dynamicContent.removeAllViews();
         if (items.length() == 0) {
-            addInfoCard(sectionTitle, emptyMessage);
+            if (filtering) {
+                addInfoCard("Nenhum resultado", "Nenhum produto salvo corresponde ao nome ou marca digitados.");
+            } else {
+                addInfoCard(sectionTitle, emptyMessage);
+            }
             return;
         }
         for (int index = 0; index < items.length(); index++) {
@@ -2731,7 +2802,6 @@ public class MainActivity extends AppCompatActivity {
         if (requestCode == REQUEST_BARCODE_SCAN) {
             String contents = data != null ? data.getStringExtra(ScannerActivity.EXTRA_BARCODE) : null;
             if (resultCode == RESULT_OK && !TextUtils.isEmpty(contents)) {
-                editBarcode.setText(contents);
                 openProductDetails(contents, activeTab, null);
             } else {
                 showMessage("Leitura cancelada. Você pode tentar novamente ou digitar o código.");
@@ -2905,4 +2975,5 @@ public class MainActivity extends AppCompatActivity {
             return new ProductResult(null, message);
         }
     }
+
 }

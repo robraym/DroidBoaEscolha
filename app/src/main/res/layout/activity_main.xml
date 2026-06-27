@@ -72,15 +72,15 @@
                     android:src="@drawable/ic_search" />
 
                 <EditText
-                    android:id="@+id/editBarcode"
+                    android:id="@+id/editSearch"
                     android:layout_width="0dp"
                     android:layout_height="match_parent"
                     android:layout_marginStart="6dp"
                     android:layout_weight="1"
                     android:background="@color/transparent"
-                    android:hint="Código de barras"
+                    android:hint="Buscar produto ou marca"
                     android:imeOptions="actionSearch"
-                    android:inputType="number"
+                    android:inputType="textCapSentences"
                     android:maxLines="1"
                     android:singleLine="true"
                     android:textColor="@color/one_ui_text_primary"
@@ -88,7 +88,7 @@
                     android:textSize="16sp" />
 
                 <ImageButton
-                    android:id="@+id/btnManual"
+                    android:id="@+id/btnSearch"
                     android:layout_width="42dp"
                     android:layout_height="42dp"
                     android:layout_marginEnd="4dp"

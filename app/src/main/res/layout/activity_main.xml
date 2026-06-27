@@ -93,9 +93,9 @@
                     android:layout_height="42dp"
                     android:layout_marginEnd="4dp"
                     android:background="@drawable/bg_icon_action"
-                    android:contentDescription="Buscar"
+                    android:contentDescription="Escanear produto"
                     android:padding="9dp"
-                    android:src="@drawable/ic_search"
+                    android:src="@drawable/ic_scan"
                     android:tint="@color/one_ui_accent" />
             </LinearLayout>
 
@@ -355,41 +355,6 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="Busca"
-                android:textColor="@color/one_ui_text_secondary"
-                android:textSize="11sp" />
-        </LinearLayout>
-
-        <LinearLayout
-            android:id="@+id/btnScan"
-            android:layout_width="0dp"
-            android:layout_height="match_parent"
-            android:layout_weight="1"
-            android:clickable="true"
-            android:focusable="true"
-            android:gravity="center"
-            android:orientation="vertical"
-            android:paddingTop="0dp">
-
-            <View
-                android:id="@+id/indicatorScan"
-                android:layout_width="34dp"
-                android:layout_height="3dp"
-                android:layout_marginBottom="6dp"
-                android:background="@drawable/bg_nav_indicator"
-                android:visibility="invisible" />
-
-            <ImageView
-                android:id="@+id/iconScan"
-                android:layout_width="24dp"
-                android:layout_height="24dp"
-                android:src="@drawable/ic_scan"
-                android:tint="@color/one_ui_text_secondary" />
-
-            <TextView
-                android:id="@+id/textScan"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Scan"
                 android:textColor="@color/one_ui_text_secondary"
                 android:textSize="11sp" />
         </LinearLayout>

@@ -2,10 +2,23 @@ package br.com.boaescolha;
 
 import android.annotation.SuppressLint;
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.Intent;
+import android.graphics.Color;
+import android.graphics.drawable.ColorDrawable;
+import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
+import android.text.InputFilter;
+import android.text.InputType;
+import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.Window;
+import android.view.WindowManager;
+import android.view.inputmethod.InputMethodManager;
+import android.widget.Button;
+import android.widget.EditText;
+import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import androidx.annotation.NonNull;
@@ -19,7 +32,6 @@ import androidx.camera.lifecycle.ProcessCameraProvider;
 import androidx.camera.view.PreviewView;
 import androidx.core.content.ContextCompat;
 import androidx.lifecycle.LifecycleOwner;
-import android.widget.Button;
 
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.mlkit.vision.barcode.BarcodeScanner;
@@ -47,6 +59,7 @@ public class ScannerActivity extends androidx.activity.ComponentActivity {
     private Camera camera;
     private boolean resultDelivered;
     private boolean torchEnabled;
+    private boolean manualEntryOpen;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -61,6 +74,7 @@ public class ScannerActivity extends androidx.activity.ComponentActivity {
                 findViewById(R.id.scannerTopPanel),
                 findViewById(R.id.scannerActions));
         findViewById(R.id.btnCancelScan).setOnClickListener(view -> cancelScan());
+        findViewById(R.id.btnManualBarcode).setOnClickListener(view -> showManualBarcodeDialog());
         btnTorch.setOnClickListener(view -> toggleTorch());
 
         BarcodeScannerOptions options = new BarcodeScannerOptions.Builder()
@@ -148,7 +162,7 @@ public class ScannerActivity extends androidx.activity.ComponentActivity {
     @SuppressLint("UnsafeOptInUsageError")
     @ExperimentalGetImage
     private void analyzeBarcode(@NonNull ImageProxy imageProxy) {
-        if (resultDelivered || !processingFrame.compareAndSet(false, true)) {
+        if (resultDelivered || manualEntryOpen || !processingFrame.compareAndSet(false, true)) {
             imageProxy.close();
             return;
         }
@@ -188,6 +202,7 @@ public class ScannerActivity extends androidx.activity.ComponentActivity {
 
     private void deliverResult(String barcode) {
         resultDelivered = true;
+        manualEntryOpen = false;
         if (cameraProvider != null) {
             cameraProvider.unbindAll();
         }
@@ -197,6 +212,121 @@ public class ScannerActivity extends androidx.activity.ComponentActivity {
         finish();
     }
 
+    private void showManualBarcodeDialog() {
+        if (resultDelivered || manualEntryOpen) {
+            return;
+        }
+        manualEntryOpen = true;
+
+        AlertDialog dialog = new AlertDialog.Builder(this).create();
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        int padding = dp(20);
+        content.setPadding(padding, dp(18), padding, dp(16));
+        content.setBackground(roundedDrawable(getColorCompat(R.color.one_ui_surface), dp(24)));
+
+        TextView title = new TextView(this);
+        title.setText("Digitar código de barras");
+        title.setTextColor(getColorCompat(R.color.one_ui_text_primary));
+        title.setTextSize(20);
+        title.setTypeface(title.getTypeface(), android.graphics.Typeface.BOLD);
+        content.addView(title, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        TextView message = new TextView(this);
+        message.setText("Digite os números que aparecem abaixo do código de barras.");
+        message.setTextColor(getColorCompat(R.color.one_ui_text_secondary));
+        message.setTextSize(14);
+        LinearLayout.LayoutParams messageParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        messageParams.topMargin = dp(8);
+        content.addView(message, messageParams);
+
+        EditText input = new EditText(this);
+        input.setSingleLine(true);
+        input.setInputType(InputType.TYPE_CLASS_NUMBER);
+        input.setFilters(new InputFilter[]{new InputFilter.LengthFilter(14)});
+        input.setHint("Ex.: 7891234567890");
+        input.setTextColor(getColorCompat(R.color.one_ui_text_primary));
+        input.setHintTextColor(getColorCompat(R.color.one_ui_text_muted));
+        input.setTextSize(16);
+        input.setSelectAllOnFocus(false);
+        input.setBackgroundResource(R.drawable.bg_input);
+        LinearLayout.LayoutParams inputParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                dp(54));
+        inputParams.topMargin = dp(16);
+        content.addView(input, inputParams);
+
+        LinearLayout buttons = new LinearLayout(this);
+        buttons.setGravity(Gravity.END);
+        buttons.setOrientation(LinearLayout.HORIZONTAL);
+        LinearLayout.LayoutParams buttonsParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        buttonsParams.topMargin = dp(18);
+
+        Button cancel = new Button(this);
+        cancel.setText("Cancelar");
+        cancel.setAllCaps(false);
+        cancel.setTextColor(getColorCompat(R.color.one_ui_text_primary));
+        cancel.setBackgroundResource(R.drawable.bg_button_secondary);
+        buttons.addView(cancel, new LinearLayout.LayoutParams(dp(112), dp(46)));
+
+        Button confirm = new Button(this);
+        confirm.setText("Consultar");
+        confirm.setAllCaps(false);
+        confirm.setTextColor(Color.WHITE);
+        confirm.setBackgroundResource(R.drawable.bg_button_primary);
+        LinearLayout.LayoutParams confirmParams = new LinearLayout.LayoutParams(dp(118), dp(46));
+        confirmParams.leftMargin = dp(10);
+        buttons.addView(confirm, confirmParams);
+
+        content.addView(buttons, buttonsParams);
+
+        cancel.setOnClickListener(view -> {
+            manualEntryOpen = false;
+            dialog.dismiss();
+        });
+        confirm.setOnClickListener(view -> {
+            String barcode = input.getText().toString().replaceAll("\\D", "");
+            if (barcode.length() < 8 || barcode.length() > 14) {
+                input.setError("Digite de 8 a 14 números.");
+                return;
+            }
+            manualEntryOpen = false;
+            dialog.dismiss();
+            deliverResult(barcode);
+        });
+        dialog.setOnDismissListener(dialogInterface -> {
+            if (!resultDelivered) {
+                manualEntryOpen = false;
+            }
+        });
+        dialog.setView(content);
+        dialog.show();
+
+        Window window = dialog.getWindow();
+        if (window != null) {
+            window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+            WindowManager.LayoutParams params = new WindowManager.LayoutParams();
+            params.copyFrom(window.getAttributes());
+            params.width = Math.min(getResources().getDisplayMetrics().widthPixels - dp(40), dp(420));
+            params.height = WindowManager.LayoutParams.WRAP_CONTENT;
+            window.setAttributes(params);
+        }
+
+        input.requestFocus();
+        input.postDelayed(() -> {
+            InputMethodManager inputMethodManager = (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
+            if (inputMethodManager != null) {
+                inputMethodManager.showSoftInput(input, InputMethodManager.SHOW_IMPLICIT);
+            }
+        }, 180);
+    }
+
     private void cancelScan() {
         setResult(Activity.RESULT_CANCELED);
         finish();
@@ -204,6 +334,21 @@ public class ScannerActivity extends androidx.activity.ComponentActivity {
 
     private void showScannerMessage(String message) {
         runOnUiThread(() -> txtScannerStatus.setText(message));
+    }
+
+    private int dp(int value) {
+        return Math.round(value * getResources().getDisplayMetrics().density);
+    }
+
+    private int getColorCompat(int colorRes) {
+        return ContextCompat.getColor(this, colorRes);
+    }
+
+    private GradientDrawable roundedDrawable(int color, int radius) {
+        GradientDrawable drawable = new GradientDrawable();
+        drawable.setColor(color);
+        drawable.setCornerRadius(radius);
+        return drawable;
     }
 
     @Override

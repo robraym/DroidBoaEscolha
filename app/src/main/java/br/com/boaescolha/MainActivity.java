@@ -179,7 +179,6 @@ public class MainActivity extends AppCompatActivity {
         txtNutriScore = findViewById(R.id.txtNutriScore);
         txtExplanation = findViewById(R.id.txtExplanation);
 
-        View btnScan = findViewById(R.id.btnScan);
         View btnSearch = findViewById(R.id.btnSearch);
         btnSaveProduct = findViewById(R.id.btnSaveProduct);
         bottomNav = findViewById(R.id.bottomNav);
@@ -195,8 +194,7 @@ public class MainActivity extends AppCompatActivity {
 
         applySystemNavigationInsets(bottomNav);
 
-        btnScan.setOnClickListener(view -> startScanner());
-        btnSearch.setOnClickListener(view -> hideKeyboard());
+        btnSearch.setOnClickListener(view -> startScanner());
         btnSaveProduct.setOnClickListener(view -> saveCurrentProduct());
         btnSort.setOnClickListener(view -> showSortMenu());
         btnBack.setOnClickListener(view -> handleBackNavigation());
@@ -1001,42 +999,43 @@ public class MainActivity extends AppCompatActivity {
 
         LinearLayout hero = new LinearLayout(this);
         hero.setOrientation(LinearLayout.HORIZONTAL);
-        hero.setGravity(android.view.Gravity.CENTER_VERTICAL);
-        hero.setPadding(0, dp(8), 0, dp(8));
+        hero.setGravity(android.view.Gravity.TOP);
+        hero.setPadding(0, dp(4), 0, dp(6));
 
         FrameLayout imageStack = new FrameLayout(this);
+
         imgProduct = new ImageView(this);
         imgProduct.setBackgroundResource(R.drawable.bg_product_image);
         imgProduct.setContentDescription(getString(R.string.product_image));
         imgProduct.setImageResource(R.drawable.ic_scan);
         imgProduct.setColorFilter(getColor(R.color.one_ui_text_muted));
-        imgProduct.setPadding(dp(34), dp(34), dp(34), dp(34));
+        imgProduct.setPadding(dp(24), dp(24), dp(24), dp(24));
         imgProduct.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
-        FrameLayout.LayoutParams imageParams = new FrameLayout.LayoutParams(dp(118), dp(118));
-        imageParams.gravity = android.view.Gravity.START | android.view.Gravity.CENTER_VERTICAL;
+        FrameLayout.LayoutParams imageParams = new FrameLayout.LayoutParams(dp(88), dp(88));
+        imageParams.gravity = android.view.Gravity.START | android.view.Gravity.TOP;
         imageStack.addView(imgProduct, imageParams);
 
         txtScore = new TextView(this);
         txtScore.setGravity(android.view.Gravity.CENTER);
         txtScore.setTextColor(getColor(android.R.color.white));
-        txtScore.setTextSize(14);
+        txtScore.setTextSize(13);
         txtScore.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
         txtScore.setBackgroundResource(R.drawable.bg_score_circle);
-        FrameLayout.LayoutParams scoreParams = new FrameLayout.LayoutParams(dp(48), dp(48));
+        FrameLayout.LayoutParams scoreParams = new FrameLayout.LayoutParams(dp(42), dp(42));
         scoreParams.gravity = android.view.Gravity.TOP | android.view.Gravity.END;
         imageStack.addView(txtScore, scoreParams);
-        hero.addView(imageStack, new LinearLayout.LayoutParams(dp(132), dp(126)));
+        hero.addView(imageStack, new LinearLayout.LayoutParams(dp(102), dp(94)));
 
         LinearLayout identity = new LinearLayout(this);
         identity.setOrientation(LinearLayout.VERTICAL);
-        identity.setPadding(dp(14), 0, 0, 0);
+        identity.setPadding(dp(12), 0, 0, 0);
 
         txtProductName = new TextView(this);
         txtProductName.setText(firstNonEmpty(product.name, "Produto sem nome informado"));
         txtProductName.setTextColor(getColor(R.color.one_ui_text_primary));
-        txtProductName.setTextSize(20);
+        txtProductName.setTextSize(18);
         txtProductName.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
-        txtProductName.setMaxLines(4);
+        txtProductName.setMaxLines(3);
         identity.addView(txtProductName);
 
         txtBrand = new TextView(this);
@@ -1048,21 +1047,6 @@ public class MainActivity extends AppCompatActivity {
                 ViewGroup.LayoutParams.WRAP_CONTENT);
         brandParams.setMargins(0, dp(4), 0, 0);
         identity.addView(txtBrand, brandParams);
-
-        txtClassification = new TextView(this);
-        txtClassification.setText(product.score.hasScore
-                ? product.score.classification
-                : "Sem nota suficiente");
-        txtClassification.setTextColor(getColor(product.score.hasScore
-                ? scoreColorRes(product.score.value)
-                : R.color.one_ui_text_secondary));
-        txtClassification.setTextSize(14);
-        txtClassification.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
-        LinearLayout.LayoutParams classificationParams = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT);
-        classificationParams.setMargins(0, dp(10), 0, 0);
-        identity.addView(txtClassification, classificationParams);
 
         txtNutriScore = new TextView(this);
         txtNutriScore.setText(!TextUtils.isEmpty(product.nutriScore)
@@ -1083,6 +1067,21 @@ public class MainActivity extends AppCompatActivity {
         dynamicContent.addView(hero, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        txtClassification = new TextView(this);
+        txtClassification.setText(product.score.hasScore
+                ? product.score.classification
+                : "Sem nota suficiente");
+        txtClassification.setTextColor(getColor(product.score.hasScore
+                ? scoreColorRes(product.score.value)
+                : R.color.one_ui_text_secondary));
+        txtClassification.setTextSize(15);
+        txtClassification.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        LinearLayout.LayoutParams classificationParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        classificationParams.setMargins(0, dp(6), 0, 0);
+        dynamicContent.addView(txtClassification, classificationParams);
 
         if (product.score.hasScore) {
             txtScore.setText(String.valueOf(product.score.value));

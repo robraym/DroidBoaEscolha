@@ -55,32 +55,50 @@
         android:layout_marginStart="20dp"
         android:layout_marginEnd="20dp"
         android:layout_marginBottom="22dp"
-        android:orientation="horizontal">
+        android:orientation="vertical">
 
         <Button
-            android:id="@+id/btnTorch"
-            android:layout_width="0dp"
+            android:id="@+id/btnManualBarcode"
+            android:layout_width="match_parent"
             android:layout_height="48dp"
-            android:layout_marginEnd="10dp"
-            android:layout_weight="1"
-            android:background="@drawable/bg_button_secondary"
-            android:text="Lanterna"
+            android:background="@drawable/bg_button_primary"
+            android:text="Digitar código de barras"
             android:textAllCaps="false"
-            android:textColor="@color/one_ui_text_primary"
+            android:textColor="@android:color/white"
             android:textSize="14sp"
             android:textStyle="bold" />
 
-        <Button
-            android:id="@+id/btnCancelScan"
-            android:layout_width="0dp"
-            android:layout_height="48dp"
-            android:layout_marginStart="10dp"
-            android:layout_weight="1"
-            android:background="@drawable/bg_button_secondary"
-            android:text="Cancelar"
-            android:textAllCaps="false"
-            android:textColor="@color/one_ui_text_primary"
-            android:textSize="14sp"
-            android:textStyle="bold" />
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/btnTorch"
+                android:layout_width="0dp"
+                android:layout_height="48dp"
+                android:layout_marginEnd="5dp"
+                android:layout_weight="1"
+                android:background="@drawable/bg_button_secondary"
+                android:text="Lanterna"
+                android:textAllCaps="false"
+                android:textColor="@color/one_ui_text_primary"
+                android:textSize="14sp"
+                android:textStyle="bold" />
+
+            <Button
+                android:id="@+id/btnCancelScan"
+                android:layout_width="0dp"
+                android:layout_height="48dp"
+                android:layout_marginStart="5dp"
+                android:layout_weight="1"
+                android:background="@drawable/bg_button_secondary"
+                android:text="Cancelar"
+                android:textAllCaps="false"
+                android:textColor="@color/one_ui_text_primary"
+                android:textSize="14sp"
+                android:textStyle="bold" />
+        </LinearLayout>
     </LinearLayout>
 </FrameLayout>

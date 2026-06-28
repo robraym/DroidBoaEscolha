@@ -140,19 +140,17 @@ public class MainActivity extends AppCompatActivity {
     private TextView txtNutriScore;
     private TextView txtExplanation;
     private ImageButton btnSearch;
+    private ImageButton btnProfile;
     private Button btnSaveProduct;
     private View indicatorSearch;
     private View indicatorLists;
     private View indicatorRecalls;
-    private View indicatorProfile;
     private ImageView iconSearch;
     private ImageView iconLists;
     private ImageView iconRecalls;
-    private ImageView iconProfile;
     private TextView textSearch;
     private TextView textLists;
     private TextView textRecalls;
-    private TextView textProfile;
     private View bottomNav;
     private ProductInfo currentProduct;
     private String currentCode = "";
@@ -164,6 +162,7 @@ public class MainActivity extends AppCompatActivity {
     private boolean showingAppSettings;
     private boolean showingProductDetails;
     private int productReturnTab = TAB_SEARCH;
+    private int profileReturnTab = TAB_SEARCH;
     private int activeTab = TAB_SEARCH;
     private int navigationInsetBottom;
     private String searchQuery = "";
@@ -211,20 +210,18 @@ public class MainActivity extends AppCompatActivity {
         txtExplanation = findViewById(R.id.txtExplanation);
 
         btnSearch = findViewById(R.id.btnSearch);
+        btnProfile = findViewById(R.id.btnProfile);
         btnSaveProduct = findViewById(R.id.btnSaveProduct);
         bottomNav = findViewById(R.id.bottomNav);
         indicatorSearch = findViewById(R.id.indicatorSearch);
         indicatorLists = findViewById(R.id.indicatorLists);
         indicatorRecalls = findViewById(R.id.indicatorRecalls);
-        indicatorProfile = findViewById(R.id.indicatorProfile);
         iconSearch = findViewById(R.id.iconSearch);
         iconLists = findViewById(R.id.iconLists);
         iconRecalls = findViewById(R.id.iconRecalls);
-        iconProfile = findViewById(R.id.iconProfile);
         textSearch = findViewById(R.id.textSearch);
         textLists = findViewById(R.id.textLists);
         textRecalls = findViewById(R.id.textRecalls);
-        textProfile = findViewById(R.id.textProfile);
 
         applySystemNavigationInsets(bottomNav);
 
@@ -238,10 +235,10 @@ public class MainActivity extends AppCompatActivity {
             }
         });
         btnBack.setOnClickListener(view -> handleBackNavigation());
+        btnProfile.setOnClickListener(view -> openProfileFromCurrentScreen());
         findViewById(R.id.navSearch).setOnClickListener(view -> showSearch());
         findViewById(R.id.navLists).setOnClickListener(view -> showSavedProducts());
         findViewById(R.id.navRecalls).setOnClickListener(view -> showRecalls());
-        findViewById(R.id.navProfile).setOnClickListener(view -> showProfile());
         getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
             @Override
             public void handleOnBackPressed() {
@@ -306,11 +303,9 @@ public class MainActivity extends AppCompatActivity {
         setNavIndicator(indicatorSearch, activeTab == TAB_SEARCH);
         setNavIndicator(indicatorLists, activeTab == TAB_LISTS);
         setNavIndicator(indicatorRecalls, activeTab == TAB_RECALLS);
-        setNavIndicator(indicatorProfile, activeTab == TAB_PROFILE);
         setNavItemState(iconSearch, textSearch, activeTab == TAB_SEARCH);
         setNavItemState(iconLists, textLists, activeTab == TAB_LISTS);
         setNavItemState(iconRecalls, textRecalls, activeTab == TAB_RECALLS);
-        setNavItemState(iconProfile, textProfile, activeTab == TAB_PROFILE);
     }
 
     private void setNavIndicator(View indicator, boolean active) {
@@ -321,6 +316,20 @@ public class MainActivity extends AppCompatActivity {
         int color = getColor(active ? R.color.one_ui_accent : R.color.one_ui_text_secondary);
         icon.setColorFilter(color);
         text.setTextColor(color);
+    }
+
+    private void openProfileFromCurrentScreen() {
+        if (showingProductDetails || activeTab == TAB_PROFILE) {
+            return;
+        }
+        profileReturnTab = activeTab;
+        showProfile();
+    }
+
+    private void setProfileButtonVisible(boolean visible) {
+        if (btnProfile != null) {
+            btnProfile.setVisibility(visible ? View.VISIBLE : View.GONE);
+        }
     }
 
     private void setBottomNavigationVisible(boolean visible) {
@@ -642,6 +651,7 @@ public class MainActivity extends AppCompatActivity {
                 cleanDisplayList(jsonProduct.optString("countries")),
                 readTagList(jsonProduct, "countries_tags"));
         product.additives = readTagList(jsonProduct, "additives_tags");
+        product.mineralWater = isMineralWaterProduct(product);
 
         JSONObject nutriments = jsonProduct.optJSONObject("nutriments");
         if (nutriments == null) {
@@ -677,8 +687,31 @@ public class MainActivity extends AppCompatActivity {
         product.proteins = readFirstNutriment(nutriments, "proteins_100g", "proteins_value", "proteins");
         product.salt = readFirstNutriment(nutriments, "salt_100g", "salt_value", "salt");
         product.sodium = readFirstNutriment(nutriments, "sodium_100g", "sodium_value", "sodium");
+        product.calcium = readFirstNutriment(nutriments, "calcium_100g", "calcium_value", "calcium");
+        product.magnesium = readFirstNutriment(nutriments, "magnesium_100g", "magnesium_value", "magnesium");
+        product.potassium = readFirstNutriment(nutriments, "potassium_100g", "potassium_value", "potassium");
+        product.bicarbonate = readFirstNutriment(nutriments, "bicarbonate_100g", "bicarbonate_value", "bicarbonate");
+        product.chloride = readFirstNutriment(nutriments, "chloride_100g", "chloride_value", "chloride");
+        product.sulfate = readFirstNutriment(nutriments, "sulfate_100g", "sulfate_value", "sulfate");
         product.novaGroup = readNovaGroup(jsonProduct, nutriments);
         return product;
+    }
+
+    private boolean isMineralWaterProduct(ProductInfo product) {
+        if (product == null) {
+            return false;
+        }
+        String text = normalizeSearchText(
+                product.name
+                        + " " + product.categories
+                        + " " + product.labels
+                        + " " + product.ingredients);
+        return text.contains("agua mineral")
+                || text.contains("aguas minerais")
+                || text.contains("mineral water")
+                || text.contains("spring water")
+                || (text.contains("agua") && text.contains("mineral"))
+                || text.contains("water, bottled");
     }
 
     private boolean shouldTrySupplementalSource(JSONObject product) {
@@ -1215,6 +1248,7 @@ public class MainActivity extends AppCompatActivity {
         setBottomNavigationVisible(false);
         topHeader.setVisibility(View.VISIBLE);
         btnBack.setVisibility(View.VISIBLE);
+        setProfileButtonVisible(false);
         txtTitle.setText("Detalhes do produto");
         txtTitle.setTextSize(24);
         searchContainer.setVisibility(View.GONE);
@@ -1384,9 +1418,13 @@ public class MainActivity extends AppCompatActivity {
                 "Como chegamos à nota",
                 product.score.hasScore
                         ? product.score.explanation
+                        : product.mineralWater
+                        ? "Água mineral nem sempre traz Nutri-Score ou tabela nutricional completa nas bases consultadas. Neste caso, confira os dados da água e da garrafa abaixo, como volume, origem, embalagem e minerais disponíveis."
                         : "O Open Food Facts não trouxe Nutri-Score nem dados nutricionais suficientes para estimar uma nota com segurança.",
                 R.color.one_ui_text_secondary);
         addDetailSection(assessment);
+
+        addMineralWaterSection(product);
 
         if (hasNutritionData(product)) {
             LinearLayout nutrition = createDetailSection("Informação nutricional");
@@ -1472,6 +1510,62 @@ public class MainActivity extends AppCompatActivity {
         addOptionalDetailRow(alert, "Fonte", firstNonEmpty(product.recallAlertSource, SOURCE_ANVISA));
         addRecallNoticeLink(alert, product.recallAlertTitle, product.recallAlertUrl);
         addDetailSection(alert);
+    }
+
+    private void addMineralWaterSection(ProductInfo product) {
+        if (product == null || !product.mineralWater || !hasMineralWaterDetails(product)) {
+            return;
+        }
+
+        LinearLayout water = createDetailSection("Dados da água");
+        addOptionalDetailRow(water, "Volume", product.quantity);
+        addOptionalDetailRow(water, "Origem", product.origins);
+        addOptionalDetailRow(water, "Fabricado em", product.manufacturingPlaces);
+        addOptionalDetailRow(water, "Embalagem", product.packaging);
+        addOptionalDetailRow(water, "Países de venda", product.countries);
+        addOptionalDetailRow(water, "Selos e características", product.labels);
+        addOptionalWaterMineralRow(water, "Sódio", product.sodium);
+        addOptionalWaterMineralRow(water, "Cálcio", product.calcium);
+        addOptionalWaterMineralRow(water, "Magnésio", product.magnesium);
+        addOptionalWaterMineralRow(water, "Potássio", product.potassium);
+        addOptionalWaterMineralRow(water, "Bicarbonato", product.bicarbonate);
+        addOptionalWaterMineralRow(water, "Cloreto", product.chloride);
+        addOptionalWaterMineralRow(water, "Sulfato", product.sulfate);
+        addDetailSection(water);
+    }
+
+    private boolean hasMineralWaterDetails(ProductInfo product) {
+        return !TextUtils.isEmpty(product.quantity)
+                || !TextUtils.isEmpty(product.origins)
+                || !TextUtils.isEmpty(product.manufacturingPlaces)
+                || !TextUtils.isEmpty(product.packaging)
+                || !TextUtils.isEmpty(product.countries)
+                || !TextUtils.isEmpty(product.labels)
+                || product.sodium >= 0
+                || product.calcium >= 0
+                || product.magnesium >= 0
+                || product.potassium >= 0
+                || product.bicarbonate >= 0
+                || product.chloride >= 0
+                || product.sulfate >= 0;
+    }
+
+    private void addOptionalWaterMineralRow(LinearLayout section, String label, double value) {
+        if (value < 0) {
+            return;
+        }
+        addOptionalDetailRow(section, label, formatWaterMineralValue(value));
+    }
+
+    private String formatWaterMineralValue(double gramsPer100Ml) {
+        double mgPerLiter = gramsPer100Ml * 10000;
+        if (Math.abs(mgPerLiter - Math.rint(mgPerLiter)) < 0.01) {
+            return String.format(Locale.getDefault(), "%.0f mg/L", mgPerLiter);
+        }
+        if (mgPerLiter < 10) {
+            return String.format(Locale.getDefault(), "%.2f mg/L", mgPerLiter);
+        }
+        return String.format(Locale.getDefault(), "%.1f mg/L", mgPerLiter);
     }
 
     private LinearLayout createDetailSection(String titleText) {
@@ -1656,6 +1750,7 @@ public class MainActivity extends AppCompatActivity {
         updateNavigationState(TAB_SEARCH);
         topHeader.setVisibility(View.VISIBLE);
         btnBack.setVisibility(View.GONE);
+        setProfileButtonVisible(true);
         sectionHeader.setVisibility(View.VISIBLE);
         txtTitle.setText("Busca");
         txtTitle.setTextSize(30);
@@ -1741,6 +1836,7 @@ public class MainActivity extends AppCompatActivity {
         updateNavigationState(TAB_RECALLS);
         topHeader.setVisibility(View.VISIBLE);
         btnBack.setVisibility(View.GONE);
+        setProfileButtonVisible(true);
         sectionHeader.setVisibility(View.VISIBLE);
         txtTitle.setText("Alertas no Brasil");
         txtTitle.setTextSize(30);
@@ -2172,7 +2268,8 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void renderRecallItems() {
-        txtSectionTitle.setText("");
+        boolean filtering = !TextUtils.isEmpty(normalizeSearchText(recallQuery));
+        txtSectionTitle.setText(filtering ? "Resultados" : "Notificações");
         txtSectionMeta.setText(recallMetaText());
         dynamicContent.removeAllViews();
 
@@ -2603,8 +2700,11 @@ public class MainActivity extends AppCompatActivity {
         setLoading(false);
         setBottomNavigationVisible(true);
         updateNavigationState(TAB_PROFILE);
-        topHeader.setVisibility(View.GONE);
-        btnBack.setVisibility(View.GONE);
+        topHeader.setVisibility(View.VISIBLE);
+        btnBack.setVisibility(View.VISIBLE);
+        setProfileButtonVisible(false);
+        txtTitle.setText("Perfil");
+        txtTitle.setTextSize(30);
         sectionHeader.setVisibility(View.GONE);
         searchContainer.setVisibility(View.GONE);
         filtersScroll.setVisibility(View.GONE);
@@ -2633,6 +2733,7 @@ public class MainActivity extends AppCompatActivity {
         updateNavigationState(TAB_PROFILE);
         topHeader.setVisibility(View.VISIBLE);
         btnBack.setVisibility(View.VISIBLE);
+        setProfileButtonVisible(false);
         sectionHeader.setVisibility(View.GONE);
         txtTitle.setText("Configurações");
         txtTitle.setTextSize(30);
@@ -2661,6 +2762,7 @@ public class MainActivity extends AppCompatActivity {
         currentListEmptyMessage = emptyMessage;
         topHeader.setVisibility(View.VISIBLE);
         btnBack.setVisibility(View.GONE);
+        setProfileButtonVisible(true);
         sectionHeader.setVisibility(View.VISIBLE);
         txtTitle.setText(title);
         txtTitle.setTextSize(30);
@@ -3548,6 +3650,7 @@ public class MainActivity extends AppCompatActivity {
             json.put("packaging", product.packaging);
             json.put("countries", product.countries);
             json.put("additives", product.additives);
+            json.put("mineralWater", product.mineralWater);
             json.put("novaGroup", product.novaGroup);
             json.put("energyKcal", product.energyKcal);
             json.put("fat", product.fat);
@@ -3558,6 +3661,12 @@ public class MainActivity extends AppCompatActivity {
             json.put("proteins", product.proteins);
             json.put("salt", product.salt);
             json.put("sodium", product.sodium);
+            json.put("calcium", product.calcium);
+            json.put("magnesium", product.magnesium);
+            json.put("potassium", product.potassium);
+            json.put("bicarbonate", product.bicarbonate);
+            json.put("chloride", product.chloride);
+            json.put("sulfate", product.sulfate);
             json.put("recallAlertTitle", firstNonEmpty(product.recallAlertTitle, ""));
             json.put("recallAlertProductName", firstNonEmpty(product.recallAlertProductName, ""));
             json.put("recallAlertType", firstNonEmpty(product.recallAlertType, ""));
@@ -3594,6 +3703,7 @@ public class MainActivity extends AppCompatActivity {
         map.put("packaging", firstNonEmpty(product.packaging, ""));
         map.put("countries", firstNonEmpty(product.countries, ""));
         map.put("additives", firstNonEmpty(product.additives, ""));
+        map.put("mineralWater", product.mineralWater);
         map.put("novaGroup", product.novaGroup);
         map.put("energyKcal", product.energyKcal);
         map.put("fat", product.fat);
@@ -3604,6 +3714,12 @@ public class MainActivity extends AppCompatActivity {
         map.put("proteins", product.proteins);
         map.put("salt", product.salt);
         map.put("sodium", product.sodium);
+        map.put("calcium", product.calcium);
+        map.put("magnesium", product.magnesium);
+        map.put("potassium", product.potassium);
+        map.put("bicarbonate", product.bicarbonate);
+        map.put("chloride", product.chloride);
+        map.put("sulfate", product.sulfate);
         map.put("recallAlertTitle", firstNonEmpty(product.recallAlertTitle, ""));
         map.put("recallAlertProductName", firstNonEmpty(product.recallAlertProductName, ""));
         map.put("recallAlertType", firstNonEmpty(product.recallAlertType, ""));
@@ -3688,6 +3804,7 @@ public class MainActivity extends AppCompatActivity {
         product.packaging = item.optString("packaging");
         product.countries = item.optString("countries");
         product.additives = item.optString("additives");
+        product.mineralWater = item.optBoolean("mineralWater", isMineralWaterProduct(product));
         product.novaGroup = item.optInt("novaGroup", 0);
         product.energyKcal = item.optDouble("energyKcal", -1);
         product.fat = item.optDouble("fat", -1);
@@ -3698,6 +3815,12 @@ public class MainActivity extends AppCompatActivity {
         product.proteins = item.optDouble("proteins", -1);
         product.salt = item.optDouble("salt", -1);
         product.sodium = item.optDouble("sodium", -1);
+        product.calcium = item.optDouble("calcium", -1);
+        product.magnesium = item.optDouble("magnesium", -1);
+        product.potassium = item.optDouble("potassium", -1);
+        product.bicarbonate = item.optDouble("bicarbonate", -1);
+        product.chloride = item.optDouble("chloride", -1);
+        product.sulfate = item.optDouble("sulfate", -1);
         product.recallAlertTitle = item.optString("recallAlertTitle");
         product.recallAlertProductName = item.optString("recallAlertProductName");
         product.recallAlertType = item.optString("recallAlertType");
@@ -3803,6 +3926,8 @@ public class MainActivity extends AppCompatActivity {
                 item.put("packaging", firstNonEmpty(document.getString("packaging"), ""));
                 item.put("countries", firstNonEmpty(document.getString("countries"), ""));
                 item.put("additives", firstNonEmpty(document.getString("additives"), ""));
+                Boolean mineralWater = document.getBoolean("mineralWater");
+                item.put("mineralWater", mineralWater != null && mineralWater);
                 Long novaGroup = document.getLong("novaGroup");
                 item.put("novaGroup", novaGroup != null ? novaGroup : 0);
                 putDocumentNumber(item, document, "energyKcal");
@@ -3814,6 +3939,12 @@ public class MainActivity extends AppCompatActivity {
                 putDocumentNumber(item, document, "proteins");
                 putDocumentNumber(item, document, "salt");
                 putDocumentNumber(item, document, "sodium");
+                putDocumentNumber(item, document, "calcium");
+                putDocumentNumber(item, document, "magnesium");
+                putDocumentNumber(item, document, "potassium");
+                putDocumentNumber(item, document, "bicarbonate");
+                putDocumentNumber(item, document, "chloride");
+                putDocumentNumber(item, document, "sulfate");
                 item.put("recallAlertTitle", firstNonEmpty(document.getString("recallAlertTitle"), ""));
                 item.put("recallAlertProductName", firstNonEmpty(document.getString("recallAlertProductName"), ""));
                 item.put("recallAlertType", firstNonEmpty(document.getString("recallAlertType"), ""));
@@ -4036,7 +4167,21 @@ public class MainActivity extends AppCompatActivity {
             showProfile();
             return true;
         }
+        if (activeTab == TAB_PROFILE) {
+            returnFromProfile();
+            return true;
+        }
         return false;
+    }
+
+    private void returnFromProfile() {
+        if (profileReturnTab == TAB_LISTS) {
+            showSavedProducts();
+        } else if (profileReturnTab == TAB_RECALLS) {
+            showRecalls();
+        } else {
+            showSearch();
+        }
     }
 
     private void returnFromProductDetails() {
@@ -4120,6 +4265,7 @@ public class MainActivity extends AppCompatActivity {
         String packaging;
         String countries;
         String additives;
+        boolean mineralWater;
         int novaGroup;
         double energyKcal = -1;
         double fat = -1;
@@ -4130,6 +4276,12 @@ public class MainActivity extends AppCompatActivity {
         double proteins = -1;
         double salt = -1;
         double sodium = -1;
+        double calcium = -1;
+        double magnesium = -1;
+        double potassium = -1;
+        double bicarbonate = -1;
+        double chloride = -1;
+        double sulfate = -1;
         String recallAlertTitle;
         String recallAlertProductName;
         String recallAlertType;

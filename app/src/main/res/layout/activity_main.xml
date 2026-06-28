@@ -53,6 +53,17 @@
                     android:textSize="30sp"
                     android:textStyle="bold" />
 
+                <ImageButton
+                    android:id="@+id/btnProfile"
+                    android:layout_width="42dp"
+                    android:layout_height="42dp"
+                    android:layout_marginStart="10dp"
+                    android:background="@drawable/bg_profile_avatar"
+                    android:contentDescription="Perfil"
+                    android:padding="9dp"
+                    android:src="@drawable/ic_user"
+                    android:tint="@android:color/white" />
+
             </LinearLayout>
 
             <LinearLayout
@@ -425,37 +436,5 @@
                 android:textSize="11sp" />
         </LinearLayout>
 
-        <LinearLayout
-            android:id="@+id/navProfile"
-            android:layout_width="0dp"
-            android:layout_height="match_parent"
-            android:layout_weight="1"
-            android:clickable="true"
-            android:gravity="center"
-            android:orientation="vertical">
-
-            <View
-                android:id="@+id/indicatorProfile"
-                android:layout_width="34dp"
-                android:layout_height="3dp"
-                android:layout_marginBottom="6dp"
-                android:background="@drawable/bg_nav_indicator"
-                android:visibility="invisible" />
-
-            <ImageView
-                android:id="@+id/iconProfile"
-                android:layout_width="24dp"
-                android:layout_height="24dp"
-                android:src="@drawable/ic_user"
-                android:tint="@color/one_ui_text_secondary" />
-
-            <TextView
-                android:id="@+id/textProfile"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Perfil"
-                android:textColor="@color/one_ui_text_secondary"
-                android:textSize="11sp" />
-        </LinearLayout>
     </LinearLayout>
 </FrameLayout>

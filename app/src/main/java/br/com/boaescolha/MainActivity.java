@@ -68,7 +68,10 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public class MainActivity extends AppCompatActivity {
-    private static final String API_URL = "https://world.openfoodfacts.org/api/v2/product/";
+    private static final String OPEN_FOOD_FACTS_API_URL = "https://world.openfoodfacts.org/api/v2/product/";
+    private static final String OPEN_PRODUCTS_FACTS_API_URL = "https://world.openproductsfacts.org/api/v2/product/";
+    private static final String SOURCE_OPEN_FOOD_FACTS = "Open Food Facts";
+    private static final String SOURCE_OPEN_PRODUCTS_FACTS = "Open Products Facts";
     private static final String USER_AGENT = "BoaEscolhaAndroid/1.0 (Android; contato-local)";
     private static final int REQUEST_CAMERA_PERMISSION = 1001;
     private static final int REQUEST_BARCODE_SCAN = 1002;
@@ -429,9 +432,32 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private ProductResult fetchProduct(String code) {
+        ProductSourceResult primary = fetchProductJson(OPEN_FOOD_FACTS_API_URL, SOURCE_OPEN_FOOD_FACTS, code);
+        ProductSourceResult supplemental = null;
+
+        if (primary.product != null) {
+            if (shouldTrySupplementalSource(primary.product)) {
+                supplemental = fetchProductJson(OPEN_PRODUCTS_FACTS_API_URL, SOURCE_OPEN_PRODUCTS_FACTS, code);
+            }
+            JSONObject mergedProduct = mergeProductData(primary.product, supplemental != null ? supplemental.product : null);
+            return ProductResult.success(buildProductInfo(code, mergedProduct, sourceSummary(primary, supplemental)));
+        }
+
+        supplemental = fetchProductJson(OPEN_PRODUCTS_FACTS_API_URL, SOURCE_OPEN_PRODUCTS_FACTS, code);
+        if (supplemental.product != null) {
+            return ProductResult.success(buildProductInfo(code, supplemental.product, sourceSummary(null, supplemental)));
+        }
+
+        if (!TextUtils.isEmpty(primary.errorMessage)) {
+            return ProductResult.error(primary.errorMessage);
+        }
+        return ProductResult.notFound();
+    }
+
+    private ProductSourceResult fetchProductJson(String baseUrl, String sourceName, String code) {
         HttpURLConnection connection = null;
         try {
-            URL url = new URL(API_URL + code);
+            URL url = new URL(baseUrl + code);
             connection = (HttpURLConnection) url.openConnection();
             connection.setConnectTimeout(12000);
             connection.setReadTimeout(12000);
@@ -445,107 +471,249 @@ public class MainActivity extends AppCompatActivity {
                     : connection.getErrorStream();
             String body = readText(stream);
             if (responseCode < 200 || responseCode >= 300) {
-                return ProductResult.error("Não foi possível consultar o produto agora. Tente novamente em instantes.");
+                return ProductSourceResult.error(sourceName, "Não foi possível consultar o produto agora. Tente novamente em instantes.");
             }
 
             JSONObject root = new JSONObject(body);
             if (root.optInt("status", 0) != 1) {
-                return ProductResult.notFound();
+                return ProductSourceResult.notFound(sourceName);
             }
 
             JSONObject jsonProduct = root.optJSONObject("product");
             if (jsonProduct == null) {
-                return ProductResult.notFound();
+                return ProductSourceResult.notFound(sourceName);
             }
 
-            ProductInfo product = new ProductInfo();
-            product.name = firstNonEmpty(
-                    jsonProduct.optString("product_name_pt"),
-                    jsonProduct.optString("product_name"),
-                    jsonProduct.optString("generic_name_pt"),
-                    jsonProduct.optString("generic_name"),
-                    "Produto sem nome informado");
-            product.brand = firstNonEmpty(jsonProduct.optString("brands"), "");
-            product.imageUrl = firstNonEmpty(
-                    jsonProduct.optString("image_front_url"),
-                    jsonProduct.optString("image_url"),
-                    "");
-            product.nutriScore = readNutriScore(jsonProduct);
-            product.score = calculateScore(product.nutriScore, jsonProduct);
-            product.code = code;
-            product.quantity = firstNonEmpty(jsonProduct.optString("quantity"), "");
-            product.servingSize = firstNonEmpty(jsonProduct.optString("serving_size"), "");
-            product.ingredients = firstNonEmpty(
-                    jsonProduct.optString("ingredients_text_pt"),
-                    jsonProduct.optString("ingredients_text"),
-                    "");
-            product.allergens = firstNonEmpty(
-                    cleanDisplayList(jsonProduct.optString("allergens")),
-                    cleanDisplayList(jsonProduct.optString("allergens_from_ingredients")),
-                    readTagList(jsonProduct, "allergens_tags"));
-            product.traces = firstNonEmpty(
-                    cleanDisplayList(jsonProduct.optString("traces")),
-                    readTagList(jsonProduct, "traces_tags"));
-            product.categories = firstNonEmpty(
-                    cleanDisplayList(jsonProduct.optString("categories")),
-                    readTagList(jsonProduct, "categories_tags"));
-            product.labels = firstNonEmpty(
-                    cleanDisplayList(jsonProduct.optString("labels")),
-                    readTagList(jsonProduct, "labels_tags"));
-            product.origins = firstNonEmpty(
-                    cleanDisplayList(jsonProduct.optString("origins")),
-                    readTagList(jsonProduct, "origins_tags"));
-            product.manufacturingPlaces = cleanDisplayList(jsonProduct.optString("manufacturing_places"));
-            product.packaging = firstNonEmpty(
-                    cleanDisplayList(jsonProduct.optString("packaging")),
-                    readTagList(jsonProduct, "packaging_tags"));
-            product.countries = firstNonEmpty(
-                    cleanDisplayList(jsonProduct.optString("countries")),
-                    readTagList(jsonProduct, "countries_tags"));
-            product.additives = readTagList(jsonProduct, "additives_tags");
-
-            JSONObject nutriments = jsonProduct.optJSONObject("nutriments");
-            if (nutriments == null) {
-                nutriments = new JSONObject();
-            }
-            product.energyKcal = readFirstNutriment(
-                    nutriments,
-                    "energy-kcal_100g",
-                    "energy-kcal_value",
-                    "energy-kcal");
-            if (product.energyKcal < 0) {
-                double energyKj = readFirstNutriment(
-                        nutriments,
-                        "energy-kj_100g",
-                        "energy_100g",
-                        "energy-kj_value",
-                        "energy-kj");
-                product.energyKcal = energyKj >= 0 ? energyKj / 4.184 : -1;
-            }
-            product.fat = readFirstNutriment(nutriments, "fat_100g", "fat_value", "fat");
-            product.saturatedFat = readFirstNutriment(
-                    nutriments,
-                    "saturated-fat_100g",
-                    "saturated-fat_value",
-                    "saturated-fat");
-            product.carbohydrates = readFirstNutriment(
-                    nutriments,
-                    "carbohydrates_100g",
-                    "carbohydrates_value",
-                    "carbohydrates");
-            product.sugars = readFirstNutriment(nutriments, "sugars_100g", "sugars_value", "sugars");
-            product.fiber = readFirstNutriment(nutriments, "fiber_100g", "fiber_value", "fiber");
-            product.proteins = readFirstNutriment(nutriments, "proteins_100g", "proteins_value", "proteins");
-            product.salt = readFirstNutriment(nutriments, "salt_100g", "salt_value", "salt");
-            product.sodium = readFirstNutriment(nutriments, "sodium_100g", "sodium_value", "sodium");
-            product.novaGroup = readNovaGroup(jsonProduct, nutriments);
-            return ProductResult.success(product);
+            return ProductSourceResult.success(sourceName, jsonProduct);
         } catch (Exception exception) {
-            return ProductResult.error("Não consegui buscar esse produto. Verifique a conexão e tente novamente.");
+            return ProductSourceResult.error(sourceName, "Não consegui buscar esse produto. Verifique a conexão e tente novamente.");
         } finally {
             if (connection != null) {
                 connection.disconnect();
             }
+        }
+    }
+
+    private ProductInfo buildProductInfo(String code, JSONObject jsonProduct, String dataSources) {
+        ProductInfo product = new ProductInfo();
+        product.name = firstNonEmpty(
+                jsonProduct.optString("product_name_pt"),
+                jsonProduct.optString("product_name"),
+                jsonProduct.optString("generic_name_pt"),
+                jsonProduct.optString("generic_name"),
+                "Produto sem nome informado");
+        product.brand = firstNonEmpty(jsonProduct.optString("brands"), "");
+        product.imageUrl = firstNonEmpty(
+                jsonProduct.optString("image_front_url"),
+                jsonProduct.optString("image_url"),
+                "");
+        product.nutriScore = readNutriScore(jsonProduct);
+        product.score = calculateScore(product.nutriScore, jsonProduct, dataSources);
+        product.code = code;
+        product.dataSources = firstNonEmpty(dataSources, SOURCE_OPEN_FOOD_FACTS);
+        product.quantity = firstNonEmpty(jsonProduct.optString("quantity"), "");
+        product.servingSize = firstNonEmpty(jsonProduct.optString("serving_size"), "");
+        product.ingredients = firstNonEmpty(
+                jsonProduct.optString("ingredients_text_pt"),
+                jsonProduct.optString("ingredients_text"),
+                "");
+        product.allergens = firstNonEmpty(
+                cleanDisplayList(jsonProduct.optString("allergens")),
+                cleanDisplayList(jsonProduct.optString("allergens_from_ingredients")),
+                readTagList(jsonProduct, "allergens_tags"));
+        product.traces = firstNonEmpty(
+                cleanDisplayList(jsonProduct.optString("traces")),
+                readTagList(jsonProduct, "traces_tags"));
+        product.categories = firstNonEmpty(
+                cleanDisplayList(jsonProduct.optString("categories")),
+                readTagList(jsonProduct, "categories_tags"));
+        product.labels = firstNonEmpty(
+                cleanDisplayList(jsonProduct.optString("labels")),
+                readTagList(jsonProduct, "labels_tags"));
+        product.origins = firstNonEmpty(
+                cleanDisplayList(jsonProduct.optString("origins")),
+                readTagList(jsonProduct, "origins_tags"));
+        product.manufacturingPlaces = cleanDisplayList(jsonProduct.optString("manufacturing_places"));
+        product.packaging = firstNonEmpty(
+                cleanDisplayList(jsonProduct.optString("packaging")),
+                readTagList(jsonProduct, "packaging_tags"));
+        product.countries = firstNonEmpty(
+                cleanDisplayList(jsonProduct.optString("countries")),
+                readTagList(jsonProduct, "countries_tags"));
+        product.additives = readTagList(jsonProduct, "additives_tags");
+
+        JSONObject nutriments = jsonProduct.optJSONObject("nutriments");
+        if (nutriments == null) {
+            nutriments = new JSONObject();
+        }
+        product.energyKcal = readFirstNutriment(
+                nutriments,
+                "energy-kcal_100g",
+                "energy-kcal_value",
+                "energy-kcal");
+        if (product.energyKcal < 0) {
+            double energyKj = readFirstNutriment(
+                    nutriments,
+                    "energy-kj_100g",
+                    "energy_100g",
+                    "energy-kj_value",
+                    "energy-kj");
+            product.energyKcal = energyKj >= 0 ? energyKj / 4.184 : -1;
+        }
+        product.fat = readFirstNutriment(nutriments, "fat_100g", "fat_value", "fat");
+        product.saturatedFat = readFirstNutriment(
+                nutriments,
+                "saturated-fat_100g",
+                "saturated-fat_value",
+                "saturated-fat");
+        product.carbohydrates = readFirstNutriment(
+                nutriments,
+                "carbohydrates_100g",
+                "carbohydrates_value",
+                "carbohydrates");
+        product.sugars = readFirstNutriment(nutriments, "sugars_100g", "sugars_value", "sugars");
+        product.fiber = readFirstNutriment(nutriments, "fiber_100g", "fiber_value", "fiber");
+        product.proteins = readFirstNutriment(nutriments, "proteins_100g", "proteins_value", "proteins");
+        product.salt = readFirstNutriment(nutriments, "salt_100g", "salt_value", "salt");
+        product.sodium = readFirstNutriment(nutriments, "sodium_100g", "sodium_value", "sodium");
+        product.novaGroup = readNovaGroup(jsonProduct, nutriments);
+        return product;
+    }
+
+    private boolean shouldTrySupplementalSource(JSONObject product) {
+        return TextUtils.isEmpty(firstNonEmpty(
+                product.optString("product_name_pt"),
+                product.optString("product_name"),
+                product.optString("generic_name_pt"),
+                product.optString("generic_name")))
+                || TextUtils.isEmpty(firstNonEmpty(
+                product.optString("image_front_url"),
+                product.optString("image_url")))
+                || TextUtils.isEmpty(product.optString("brands"))
+                || (TextUtils.isEmpty(readNutriScore(product)) && countScoreSignals(product) < 3);
+    }
+
+    private int countScoreSignals(JSONObject product) {
+        JSONObject nutriments = product.optJSONObject("nutriments");
+        if (nutriments == null) {
+            nutriments = new JSONObject();
+        }
+        JSONObject nutrientLevels = product.optJSONObject("nutrient_levels");
+
+        int signals = 0;
+        if (readFirstNutriment(nutriments, "sugars_100g", "sugars_value", "sugars") >= 0
+                || nutrientLevelPenalty(nutrientLevels, product, "sugars", 1, 1, 1) >= 0) {
+            signals++;
+        }
+        if (readFirstNutriment(nutriments, "saturated-fat_100g", "saturated-fat_value", "saturated-fat") >= 0
+                || nutrientLevelPenalty(nutrientLevels, product, "saturated-fat", 1, 1, 1) >= 0) {
+            signals++;
+        }
+        if (readFirstNutriment(nutriments, "salt_100g", "salt_value", "salt") >= 0
+                || readFirstNutriment(nutriments, "sodium_100g", "sodium_value", "sodium") >= 0
+                || nutrientLevelPenalty(nutrientLevels, product, "salt", 1, 1, 1) >= 0) {
+            signals++;
+        }
+        if (readFirstNutriment(nutriments, "energy-kcal_100g", "energy-kcal_value", "energy-kcal") >= 0
+                || readFirstNutriment(nutriments, "energy-kj_100g", "energy_100g", "energy-kj_value", "energy-kj") >= 0) {
+            signals++;
+        }
+        if (readFirstNutriment(nutriments, "fiber_100g", "fiber_value", "fiber") >= 0) {
+            signals++;
+        }
+        if (readFirstNutriment(nutriments, "proteins_100g", "proteins_value", "proteins") >= 0) {
+            signals++;
+        }
+        if (readNovaGroup(product, nutriments) > 0) {
+            signals++;
+        }
+        return signals;
+    }
+
+    private JSONObject mergeProductData(JSONObject primary, JSONObject supplemental) {
+        JSONObject merged;
+        try {
+            merged = primary != null ? new JSONObject(primary.toString()) : new JSONObject();
+            if (supplemental == null) {
+                return merged;
+            }
+
+            JSONArray keys = supplemental.names();
+            if (keys == null) {
+                return merged;
+            }
+
+            for (int index = 0; index < keys.length(); index++) {
+                String key = keys.optString(index);
+                Object supplementalValue = supplemental.opt(key);
+                if (!isUsefulJsonValue(supplementalValue)) {
+                    continue;
+                }
+
+                if ("nutriments".equals(key) || "nutrient_levels".equals(key)) {
+                    JSONObject targetNested = merged.optJSONObject(key);
+                    JSONObject supplementalNested = supplemental.optJSONObject(key);
+                    if (supplementalNested != null) {
+                        merged.put(key, mergeNestedJson(targetNested, supplementalNested));
+                    }
+                    continue;
+                }
+
+                if (!isUsefulJsonValue(merged.opt(key))) {
+                    merged.put(key, supplementalValue);
+                }
+            }
+        } catch (Exception exception) {
+            return primary != null ? primary : new JSONObject();
+        }
+        return merged;
+    }
+
+    private JSONObject mergeNestedJson(JSONObject primary, JSONObject supplemental) throws Exception {
+        JSONObject merged = primary != null ? new JSONObject(primary.toString()) : new JSONObject();
+        JSONArray keys = supplemental.names();
+        if (keys == null) {
+            return merged;
+        }
+        for (int index = 0; index < keys.length(); index++) {
+            String key = keys.optString(index);
+            if (!isUsefulJsonValue(merged.opt(key)) && isUsefulJsonValue(supplemental.opt(key))) {
+                merged.put(key, supplemental.opt(key));
+            }
+        }
+        return merged;
+    }
+
+    private boolean isUsefulJsonValue(Object value) {
+        if (value == null || value == JSONObject.NULL) {
+            return false;
+        }
+        if (value instanceof String) {
+            String text = ((String) value).trim();
+            return !TextUtils.isEmpty(text) && !"unknown".equalsIgnoreCase(text);
+        }
+        if (value instanceof JSONArray) {
+            return ((JSONArray) value).length() > 0;
+        }
+        if (value instanceof JSONObject) {
+            return ((JSONObject) value).length() > 0;
+        }
+        return true;
+    }
+
+    private String sourceSummary(ProductSourceResult first, ProductSourceResult second) {
+        ArrayList<String> sources = new ArrayList<>();
+        addSourceName(sources, first);
+        addSourceName(sources, second);
+        return joinSignals(sources);
+    }
+
+    private void addSourceName(ArrayList<String> sources, ProductSourceResult source) {
+        if (source == null || source.product == null || TextUtils.isEmpty(source.sourceName)) {
+            return;
+        }
+        if (!sources.contains(source.sourceName)) {
+            sources.add(source.sourceName);
         }
     }
 
@@ -623,44 +791,44 @@ public class MainActivity extends AppCompatActivity {
         return "";
     }
 
-    private ScoreInfo calculateScore(String nutriScore, JSONObject product) {
+    private ScoreInfo calculateScore(String nutriScore, JSONObject product, String dataSources) {
         switch (nutriScore) {
             case "a":
                 return ScoreInfo.withScore(
                         100,
                         classificationForScore(100),
                         "Nutri-Score",
-                        nutriScoreExplanation("A", 100));
+                        nutriScoreExplanation("A", 100, dataSources));
             case "b":
                 return ScoreInfo.withScore(
                         80,
                         classificationForScore(80),
                         "Nutri-Score",
-                        nutriScoreExplanation("B", 80));
+                        nutriScoreExplanation("B", 80, dataSources));
             case "c":
                 return ScoreInfo.withScore(
                         60,
                         classificationForScore(60),
                         "Nutri-Score",
-                        nutriScoreExplanation("C", 60));
+                        nutriScoreExplanation("C", 60, dataSources));
             case "d":
                 return ScoreInfo.withScore(
                         40,
                         classificationForScore(40),
                         "Nutri-Score",
-                        nutriScoreExplanation("D", 40));
+                        nutriScoreExplanation("D", 40, dataSources));
             case "e":
                 return ScoreInfo.withScore(
                         20,
                         classificationForScore(20),
                         "Nutri-Score",
-                        nutriScoreExplanation("E", 20));
+                        nutriScoreExplanation("E", 20, dataSources));
             default:
-                return estimateScoreFromNutrition(product);
+                return estimateScoreFromNutrition(product, dataSources);
         }
     }
 
-    private ScoreInfo estimateScoreFromNutrition(JSONObject product) {
+    private ScoreInfo estimateScoreFromNutrition(JSONObject product, String dataSources) {
         JSONObject nutriments = product.optJSONObject("nutriments");
         if (nutriments == null) {
             nutriments = new JSONObject();
@@ -801,16 +969,18 @@ public class MainActivity extends AppCompatActivity {
                 signals >= 3 ? "Estimativa nutricional" : "Estimativa parcial",
                 String.format(
                         Locale.getDefault(),
-                        "Este produto não trouxe Nutri-Score. A nota foi %s com os dados disponíveis no Open Food Facts: %s. Use como triagem rápida, não como avaliação oficial.",
+                        "Este produto não trouxe Nutri-Score. A nota foi %s com os dados estruturados disponíveis nas fontes consultadas (%s): %s. Use como triagem rápida, não como avaliação oficial.",
                         confidence,
+                        firstNonEmpty(dataSources, SOURCE_OPEN_FOOD_FACTS),
                         joinSignals(usedSignals)));
     }
 
-    private String nutriScoreExplanation(String grade, int score) {
+    private String nutriScoreExplanation(String grade, int score, String dataSources) {
         return String.format(
                 Locale.getDefault(),
-                "Nota oficial baseada no Nutri-Score %s: %d de 100. O Boa Escolha usa essa escala para destacar rapidamente opções mais favoráveis no mercado. É uma orientação simples, não uma recomendação médica.",
+                "Nota baseada no Nutri-Score %s informado nas fontes consultadas (%s): %d de 100. O Boa Escolha usa essa escala para destacar rapidamente opções mais favoráveis no mercado. É uma orientação simples, não uma recomendação médica.",
                 grade,
+                firstNonEmpty(dataSources, SOURCE_OPEN_FOOD_FACTS),
                 score);
     }
 
@@ -1165,7 +1335,10 @@ public class MainActivity extends AppCompatActivity {
         addDetailSection(productData);
 
         TextView footer = new TextView(this);
-        footer.setText("Dados fornecidos pelo Open Food Facts. A nota é uma orientação simples e não substitui recomendação médica.");
+        footer.setText(String.format(
+                Locale.getDefault(),
+                "Dados fornecidos por %s. A nota é uma orientação simples e não substitui recomendação médica.",
+                firstNonEmpty(product.dataSources, SOURCE_OPEN_FOOD_FACTS)));
         footer.setTextColor(getColor(R.color.one_ui_text_muted));
         footer.setTextSize(12);
         footer.setLineSpacing(dp(2), 1f);
@@ -2357,6 +2530,7 @@ public class MainActivity extends AppCompatActivity {
             json.put("brand", product.brand);
             json.put("imageUrl", product.imageUrl);
             json.put("nutriScore", product.nutriScore);
+            json.put("dataSources", firstNonEmpty(product.dataSources, SOURCE_OPEN_FOOD_FACTS));
             json.put("classification", product.score.classification);
             json.put("score", product.score.hasScore ? String.valueOf(product.score.value) : "");
             json.put("scoreSource", product.score.source);
@@ -2395,6 +2569,7 @@ public class MainActivity extends AppCompatActivity {
         map.put("brand", firstNonEmpty(product.brand, ""));
         map.put("imageUrl", firstNonEmpty(product.imageUrl, ""));
         map.put("nutriScore", firstNonEmpty(product.nutriScore, ""));
+        map.put("dataSources", firstNonEmpty(product.dataSources, SOURCE_OPEN_FOOD_FACTS));
         map.put("classification", product.score != null ? product.score.classification : "Sem nota suficiente");
         map.put("score", product.score != null && product.score.hasScore ? product.score.value : -1);
         map.put("scoreSource", product.score != null ? firstNonEmpty(product.score.source, "") : "");
@@ -2485,6 +2660,7 @@ public class MainActivity extends AppCompatActivity {
         product.brand = item.optString("brand");
         product.imageUrl = item.optString("imageUrl");
         product.nutriScore = item.optString("nutriScore");
+        product.dataSources = firstNonEmpty(item.optString("dataSources"), SOURCE_OPEN_FOOD_FACTS);
         product.quantity = item.optString("quantity");
         product.servingSize = item.optString("servingSize");
         product.ingredients = item.optString("ingredients");
@@ -2587,6 +2763,7 @@ public class MainActivity extends AppCompatActivity {
                 item.put("brand", firstNonEmpty(document.getString("brand"), ""));
                 item.put("imageUrl", firstNonEmpty(document.getString("imageUrl"), ""));
                 item.put("nutriScore", firstNonEmpty(document.getString("nutriScore"), ""));
+                item.put("dataSources", firstNonEmpty(document.getString("dataSources"), SOURCE_OPEN_FOOD_FACTS));
                 item.put("classification", firstNonEmpty(document.getString("classification"), "Sem nota suficiente"));
                 item.put("scoreSource", firstNonEmpty(document.getString("scoreSource"), ""));
                 item.put("explanation", firstNonEmpty(document.getString("explanation"), ""));
@@ -2899,6 +3076,7 @@ public class MainActivity extends AppCompatActivity {
         String brand;
         String imageUrl;
         String nutriScore;
+        String dataSources;
         String quantity;
         String servingSize;
         String ingredients;
@@ -2950,6 +3128,30 @@ public class MainActivity extends AppCompatActivity {
                     "Sem nota suficiente",
                     "Dados insuficientes",
                     "Não há dados suficientes para calcular uma nota.");
+        }
+    }
+
+    private static class ProductSourceResult {
+        final String sourceName;
+        final JSONObject product;
+        final String errorMessage;
+
+        private ProductSourceResult(String sourceName, JSONObject product, String errorMessage) {
+            this.sourceName = sourceName;
+            this.product = product;
+            this.errorMessage = errorMessage;
+        }
+
+        static ProductSourceResult success(String sourceName, JSONObject product) {
+            return new ProductSourceResult(sourceName, product, null);
+        }
+
+        static ProductSourceResult notFound(String sourceName) {
+            return new ProductSourceResult(sourceName, null, null);
+        }
+
+        static ProductSourceResult error(String sourceName, String message) {
+            return new ProductSourceResult(sourceName, null, message);
         }
     }
 

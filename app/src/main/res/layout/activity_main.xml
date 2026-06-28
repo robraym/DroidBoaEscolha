@@ -393,6 +393,39 @@
         </LinearLayout>
 
         <LinearLayout
+            android:id="@+id/navRecalls"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:clickable="true"
+            android:gravity="center"
+            android:orientation="vertical">
+
+            <View
+                android:id="@+id/indicatorRecalls"
+                android:layout_width="34dp"
+                android:layout_height="3dp"
+                android:layout_marginBottom="6dp"
+                android:background="@drawable/bg_nav_indicator"
+                android:visibility="invisible" />
+
+            <ImageView
+                android:id="@+id/iconRecalls"
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:src="@drawable/ic_recall"
+                android:tint="@color/one_ui_text_secondary" />
+
+            <TextView
+                android:id="@+id/textRecalls"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Alertas"
+                android:textColor="@color/one_ui_text_secondary"
+                android:textSize="11sp" />
+        </LinearLayout>
+
+        <LinearLayout
             android:id="@+id/navProfile"
             android:layout_width="0dp"
             android:layout_height="match_parent"

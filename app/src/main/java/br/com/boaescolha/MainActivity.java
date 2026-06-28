@@ -11,10 +11,12 @@ import android.graphics.BitmapFactory;
 import android.graphics.Color;
 import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.GradientDrawable;
+import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.text.Editable;
+import android.text.Html;
 import android.text.TextUtils;
 import android.text.TextWatcher;
 import android.view.KeyEvent;
@@ -62,16 +64,21 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.text.Normalizer;
+import java.util.Calendar;
 import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public class MainActivity extends AppCompatActivity {
     private static final String OPEN_FOOD_FACTS_API_URL = "https://world.openfoodfacts.org/api/v2/product/";
     private static final String OPEN_PRODUCTS_FACTS_API_URL = "https://world.openproductsfacts.org/api/v2/product/";
+    private static final String ANVISA_NEWS_URL = "https://www.gov.br/anvisa/pt-br/assuntos/noticias-anvisa/";
     private static final String SOURCE_OPEN_FOOD_FACTS = "Open Food Facts";
     private static final String SOURCE_OPEN_PRODUCTS_FACTS = "Open Products Facts";
+    private static final String SOURCE_ANVISA = "Anvisa";
     private static final String USER_AGENT = "BoaEscolhaAndroid/1.0 (Android; contato-local)";
     private static final int REQUEST_CAMERA_PERMISSION = 1001;
     private static final int REQUEST_BARCODE_SCAN = 1002;
@@ -88,9 +95,18 @@ public class MainActivity extends AppCompatActivity {
     private static final String THEME_DARK = "dark";
     private static final String SCREEN_SETTINGS = "settings";
     private static final int MAX_LOCAL_ITEMS = 20;
+    private static final int RECALL_PAGE_SIZE = 20;
+    private static final int FIRST_RECALL_YEAR = 2020;
+    private static final long PRODUCT_CACHE_TTL_MS = 6L * 60L * 60L * 1000L;
+    private static final Pattern ANVISA_ARTICLE_PATTERN = Pattern.compile("(?is)<article class=\"entry\">(.*?)</article>");
+    private static final Pattern ANVISA_TITLE_PATTERN = Pattern.compile("(?is)<a href=\"([^\"]+)\"[^>]*>(.*?)</a>");
+    private static final Pattern ANVISA_DATE_PATTERN = Pattern.compile("(?is)última modificação\\s*([0-9]{2}/[0-9]{2}/[0-9]{4})\\s*([0-9]{2}h[0-9]{2})?");
+    private static final Pattern ANVISA_SUMMARY_PATTERN = Pattern.compile("(?is)<p class=\"summary[^>]*>(.*?)</p>");
+    private static final Pattern ANVISA_IMAGE_PATTERN = Pattern.compile("(?is)<meta[^>]+(?:property|name)=\"(?:og:image|twitter:image|image)\"[^>]+content=\"([^\"]+)\"[^>]*>");
     private static final int TAB_SEARCH = 2;
     private static final int TAB_LISTS = 3;
-    private static final int TAB_PROFILE = 4;
+    private static final int TAB_RECALLS = 4;
+    private static final int TAB_PROFILE = 5;
 
     private final ExecutorService executor = Executors.newFixedThreadPool(2);
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
@@ -123,15 +139,19 @@ public class MainActivity extends AppCompatActivity {
     private TextView txtClassification;
     private TextView txtNutriScore;
     private TextView txtExplanation;
+    private ImageButton btnSearch;
     private Button btnSaveProduct;
     private View indicatorSearch;
     private View indicatorLists;
+    private View indicatorRecalls;
     private View indicatorProfile;
     private ImageView iconSearch;
     private ImageView iconLists;
+    private ImageView iconRecalls;
     private ImageView iconProfile;
     private TextView textSearch;
     private TextView textLists;
+    private TextView textRecalls;
     private TextView textProfile;
     private View bottomNav;
     private ProductInfo currentProduct;
@@ -148,6 +168,14 @@ public class MainActivity extends AppCompatActivity {
     private int navigationInsetBottom;
     private String searchQuery = "";
     private String listSearchQuery = "";
+    private String recallQuery = "";
+    private JSONArray recallItems = new JSONArray();
+    private final Map<String, String> anvisaImageUrlCache = new HashMap<>();
+    private int selectedRecallYear = Calendar.getInstance().get(Calendar.YEAR);
+    private int loadedRecallYear = -1;
+    private int recallOffset;
+    private int recallTotal = -1;
+    private boolean loadingRecalls;
     private boolean suppressSearchUpdates;
 
     @Override
@@ -182,27 +210,37 @@ public class MainActivity extends AppCompatActivity {
         txtNutriScore = findViewById(R.id.txtNutriScore);
         txtExplanation = findViewById(R.id.txtExplanation);
 
-        View btnSearch = findViewById(R.id.btnSearch);
+        btnSearch = findViewById(R.id.btnSearch);
         btnSaveProduct = findViewById(R.id.btnSaveProduct);
         bottomNav = findViewById(R.id.bottomNav);
         indicatorSearch = findViewById(R.id.indicatorSearch);
         indicatorLists = findViewById(R.id.indicatorLists);
+        indicatorRecalls = findViewById(R.id.indicatorRecalls);
         indicatorProfile = findViewById(R.id.indicatorProfile);
         iconSearch = findViewById(R.id.iconSearch);
         iconLists = findViewById(R.id.iconLists);
+        iconRecalls = findViewById(R.id.iconRecalls);
         iconProfile = findViewById(R.id.iconProfile);
         textSearch = findViewById(R.id.textSearch);
         textLists = findViewById(R.id.textLists);
+        textRecalls = findViewById(R.id.textRecalls);
         textProfile = findViewById(R.id.textProfile);
 
         applySystemNavigationInsets(bottomNav);
 
-        btnSearch.setOnClickListener(view -> startScanner());
+        configureProductSearchAction();
         btnSaveProduct.setOnClickListener(view -> saveCurrentProduct());
-        btnSort.setOnClickListener(view -> showSortMenu());
+        btnSort.setOnClickListener(view -> {
+            if (activeTab == TAB_RECALLS) {
+                showRecallYearMenu();
+            } else {
+                showSortMenu();
+            }
+        });
         btnBack.setOnClickListener(view -> handleBackNavigation());
         findViewById(R.id.navSearch).setOnClickListener(view -> showSearch());
         findViewById(R.id.navLists).setOnClickListener(view -> showSavedProducts());
+        findViewById(R.id.navRecalls).setOnClickListener(view -> showRecalls());
         findViewById(R.id.navProfile).setOnClickListener(view -> showProfile());
         getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
             @Override
@@ -247,6 +285,9 @@ public class MainActivity extends AppCompatActivity {
                             currentListKey,
                             currentListEmptyMessage,
                             readLocalItems(currentListKey));
+                } else if (activeTab == TAB_RECALLS) {
+                    recallQuery = text.toString();
+                    renderRecallItems();
                 }
             }
         });
@@ -264,9 +305,11 @@ public class MainActivity extends AppCompatActivity {
         this.activeTab = activeTab;
         setNavIndicator(indicatorSearch, activeTab == TAB_SEARCH);
         setNavIndicator(indicatorLists, activeTab == TAB_LISTS);
+        setNavIndicator(indicatorRecalls, activeTab == TAB_RECALLS);
         setNavIndicator(indicatorProfile, activeTab == TAB_PROFILE);
         setNavItemState(iconSearch, textSearch, activeTab == TAB_SEARCH);
         setNavItemState(iconLists, textLists, activeTab == TAB_LISTS);
+        setNavItemState(iconRecalls, textRecalls, activeTab == TAB_RECALLS);
         setNavItemState(iconProfile, textProfile, activeTab == TAB_PROFILE);
     }
 
@@ -384,13 +427,62 @@ public class MainActivity extends AppCompatActivity {
         suppressSearchUpdates = false;
     }
 
+    private void configureProductSearchAction() {
+        if (btnSearch == null) {
+            return;
+        }
+        btnSearch.setVisibility(View.VISIBLE);
+        btnSearch.setImageResource(R.drawable.ic_scan);
+        btnSearch.setColorFilter(getColor(R.color.one_ui_accent));
+        btnSearch.setContentDescription("Escanear produto");
+        btnSearch.setOnClickListener(view -> startScanner());
+    }
+
+    private void configureTextSearchAction(String description) {
+        if (btnSearch == null) {
+            return;
+        }
+        btnSearch.setVisibility(View.VISIBLE);
+        btnSearch.setImageResource(R.drawable.ic_search);
+        btnSearch.setColorFilter(getColor(R.color.one_ui_text_secondary));
+        btnSearch.setContentDescription(description);
+        btnSearch.setOnClickListener(view -> {
+            hideKeyboard();
+            if (activeTab == TAB_RECALLS) {
+                renderRecallItems();
+            } else if (activeTab == TAB_LISTS && !TextUtils.isEmpty(currentListKey)) {
+                renderLocalList(
+                        currentListTitle,
+                        currentListSectionTitle,
+                        currentListKey,
+                        currentListEmptyMessage,
+                        readLocalItems(currentListKey));
+            } else if (activeTab == TAB_SEARCH) {
+                renderSearchRecentItems();
+            }
+        });
+    }
+
     private void openProductDetails(String code, int returnTab, ProductInfo savedProduct) {
         if (TextUtils.isEmpty(code)) {
             return;
         }
         productReturnTab = returnTab;
+        if (isFreshSavedProduct(savedProduct, code)) {
+            currentCode = code;
+            showProduct(savedProduct);
+            return;
+        }
         showProductLoading(code);
         loadProduct(code, savedProduct);
+    }
+
+    private boolean isFreshSavedProduct(ProductInfo savedProduct, String code) {
+        if (savedProduct == null || TextUtils.isEmpty(savedProduct.code) || !savedProduct.code.equals(code)) {
+            return false;
+        }
+        return savedProduct.cachedAt > 0
+                && System.currentTimeMillis() - savedProduct.cachedAt < PRODUCT_CACHE_TTL_MS;
     }
 
     private void loadProduct(String code, ProductInfo savedProduct) {
@@ -440,12 +532,16 @@ public class MainActivity extends AppCompatActivity {
                 supplemental = fetchProductJson(OPEN_PRODUCTS_FACTS_API_URL, SOURCE_OPEN_PRODUCTS_FACTS, code);
             }
             JSONObject mergedProduct = mergeProductData(primary.product, supplemental != null ? supplemental.product : null);
-            return ProductResult.success(buildProductInfo(code, mergedProduct, sourceSummary(primary, supplemental)));
+            ProductInfo product = buildProductInfo(code, mergedProduct, sourceSummary(primary, supplemental));
+            enrichProductRecallAlert(product);
+            return ProductResult.success(product);
         }
 
         supplemental = fetchProductJson(OPEN_PRODUCTS_FACTS_API_URL, SOURCE_OPEN_PRODUCTS_FACTS, code);
         if (supplemental.product != null) {
-            return ProductResult.success(buildProductInfo(code, supplemental.product, sourceSummary(null, supplemental)));
+            ProductInfo product = buildProductInfo(code, supplemental.product, sourceSummary(null, supplemental));
+            enrichProductRecallAlert(product);
+            return ProductResult.success(product);
         }
 
         if (!TextUtils.isEmpty(primary.errorMessage)) {
@@ -470,21 +566,25 @@ public class MainActivity extends AppCompatActivity {
                     ? connection.getInputStream()
                     : connection.getErrorStream();
             String body = readText(stream);
+            JSONObject root = new JSONObject(body);
+            JSONObject jsonProduct = root.optJSONObject("product");
+            if (jsonProduct != null) {
+                return ProductSourceResult.success(sourceName, jsonProduct);
+            }
+
+            if (responseCode == 404) {
+                return ProductSourceResult.notFound(sourceName);
+            }
+
             if (responseCode < 200 || responseCode >= 300) {
                 return ProductSourceResult.error(sourceName, "Não foi possível consultar o produto agora. Tente novamente em instantes.");
             }
 
-            JSONObject root = new JSONObject(body);
             if (root.optInt("status", 0) != 1) {
                 return ProductSourceResult.notFound(sourceName);
             }
 
-            JSONObject jsonProduct = root.optJSONObject("product");
-            if (jsonProduct == null) {
-                return ProductSourceResult.notFound(sourceName);
-            }
-
-            return ProductSourceResult.success(sourceName, jsonProduct);
+            return ProductSourceResult.notFound(sourceName);
         } catch (Exception exception) {
             return ProductSourceResult.error(sourceName, "Não consegui buscar esse produto. Verifique a conexão e tente novamente.");
         } finally {
@@ -510,6 +610,7 @@ public class MainActivity extends AppCompatActivity {
         product.nutriScore = readNutriScore(jsonProduct);
         product.score = calculateScore(product.nutriScore, jsonProduct, dataSources);
         product.code = code;
+        product.cachedAt = System.currentTimeMillis();
         product.dataSources = firstNonEmpty(dataSources, SOURCE_OPEN_FOOD_FACTS);
         product.quantity = firstNonEmpty(jsonProduct.optString("quantity"), "");
         product.servingSize = firstNonEmpty(jsonProduct.optString("serving_size"), "");
@@ -1275,6 +1376,8 @@ public class MainActivity extends AppCompatActivity {
         dynamicContent.addView(btnSaveProduct, actionParams);
         updateSaveButtonState();
 
+        addProductRecallAlertSection(product);
+
         LinearLayout assessment = createDetailSection("Avaliação");
         txtExplanation = addDetailParagraph(
                 assessment,
@@ -1351,6 +1454,24 @@ public class MainActivity extends AppCompatActivity {
         if (!TextUtils.isEmpty(product.imageUrl)) {
             loadImage(product.imageUrl, currentCode);
         }
+    }
+
+    private void addProductRecallAlertSection(ProductInfo product) {
+        if (product == null || TextUtils.isEmpty(product.recallAlertTitle)) {
+            return;
+        }
+
+        LinearLayout alert = createDetailSection("Possível alerta da Anvisa");
+        addDetailParagraph(
+                alert,
+                firstNonEmpty(product.recallAlertProductName, "Produto relacionado"),
+                "Este produto pode estar relacionado a uma notificação oficial da Anvisa.",
+                R.color.one_ui_warning);
+        addOptionalDetailRow(alert, "Tipo", product.recallAlertType);
+        addOptionalDetailRow(alert, "Data", product.recallAlertDate);
+        addOptionalDetailRow(alert, "Fonte", firstNonEmpty(product.recallAlertSource, SOURCE_ANVISA));
+        addRecallNoticeLink(alert, product.recallAlertTitle, product.recallAlertUrl);
+        addDetailSection(alert);
     }
 
     private LinearLayout createDetailSection(String titleText) {
@@ -1540,8 +1661,9 @@ public class MainActivity extends AppCompatActivity {
         txtTitle.setTextSize(30);
         searchContainer.setVisibility(View.VISIBLE);
         configureSearchInput("Buscar nos recentes", searchQuery);
+        configureProductSearchAction();
         filtersScroll.setVisibility(View.GONE);
-        btnSort.setVisibility(View.GONE);
+        btnSort.setVisibility(View.INVISIBLE);
         dynamicContent.setVisibility(View.VISIBLE);
         cardStatus.setVisibility(View.GONE);
         cardResult.setVisibility(View.GONE);
@@ -1594,7 +1716,10 @@ public class MainActivity extends AppCompatActivity {
                 continue;
             }
             String searchableText = normalizeSearchText(
-                    item.optString("name") + " " + item.optString("brand"));
+                    item.optString("name")
+                            + " " + item.optString("brand")
+                            + " " + item.optString("recallAlertTitle")
+                            + " " + item.optString("recallAlertProductName"));
             if (TextUtils.isEmpty(normalizedQuery) || searchableText.contains(normalizedQuery)) {
                 filtered.put(item);
             }
@@ -1605,6 +1730,870 @@ public class MainActivity extends AppCompatActivity {
     private void showSavedProducts() {
         updateNavigationState(TAB_LISTS);
         showLocalList("Listas", "Minha lista", KEY_SAVED_PRODUCTS, "Nenhum produto salvo ainda. Consulte um produto e toque em Salvar.");
+    }
+
+    private void showRecalls() {
+        showingAppSettings = false;
+        showingProductDetails = false;
+        currentCode = "";
+        currentListKey = "";
+        setBottomNavigationVisible(true);
+        updateNavigationState(TAB_RECALLS);
+        topHeader.setVisibility(View.VISIBLE);
+        btnBack.setVisibility(View.GONE);
+        sectionHeader.setVisibility(View.VISIBLE);
+        txtTitle.setText("Alertas no Brasil");
+        txtTitle.setTextSize(30);
+        searchContainer.setVisibility(View.VISIBLE);
+        configureSearchInput("Buscar nos alertas", recallQuery);
+        configureTextSearchAction("Buscar alertas");
+        filtersScroll.setVisibility(View.GONE);
+        btnSort.setVisibility(View.VISIBLE);
+        btnSort.setContentDescription("Filtrar ano do recall");
+        cardStatus.setVisibility(View.GONE);
+        cardResult.setVisibility(View.GONE);
+        txtFooter.setVisibility(View.VISIBLE);
+        dynamicContent.setVisibility(View.VISIBLE);
+        rootScroll.scrollTo(0, 0);
+
+        if (loadedRecallYear != selectedRecallYear && !loadingRecalls) {
+            loadRecalls(true);
+        } else {
+            renderRecallItems();
+        }
+    }
+
+    private void loadRecalls(boolean reset) {
+        if (loadingRecalls) {
+            return;
+        }
+        if (reset) {
+            recallItems = new JSONArray();
+            recallOffset = 0;
+            recallTotal = -1;
+            loadedRecallYear = selectedRecallYear;
+        }
+
+        loadingRecalls = true;
+        setLoading(true);
+        if (reset) {
+            renderRecallItems();
+        }
+
+        int year = selectedRecallYear;
+        int offset = recallOffset;
+        executor.execute(() -> {
+            RecallResult result = fetchRecallItems(year, offset);
+            mainHandler.post(() -> {
+                if (activeTab != TAB_RECALLS || year != selectedRecallYear) {
+                    loadingRecalls = false;
+                    setLoading(false);
+                    return;
+                }
+                loadingRecalls = false;
+                setLoading(false);
+                if (!TextUtils.isEmpty(result.errorMessage)) {
+                    renderRecallItems();
+                    showMessage(result.errorMessage);
+                    return;
+                }
+                appendRecallItems(result.items);
+                recallTotal = result.total < 0 ? -1 : recallItems.length();
+                recallOffset += RECALL_PAGE_SIZE;
+                renderRecallItems();
+            });
+        });
+    }
+
+    private RecallResult fetchRecallItems(int year, int offset) {
+        HttpURLConnection connection = null;
+        try {
+            URL url = new URL(ANVISA_NEWS_URL + year + "?b_start:int=" + offset);
+            connection = (HttpURLConnection) url.openConnection();
+            connection.setConnectTimeout(12000);
+            connection.setReadTimeout(12000);
+            connection.setRequestProperty("User-Agent", USER_AGENT);
+
+            int responseCode = connection.getResponseCode();
+            if (responseCode < 200 || responseCode >= 300) {
+                return RecallResult.error("Não foi possível carregar recolhimentos da Anvisa agora. Tente novamente em instantes.");
+            }
+
+            String body = readText(connection.getInputStream());
+            JSONArray results = parseAnvisaRecallItems(body);
+            boolean hasMore = body.contains("b_start:int=" + (offset + RECALL_PAGE_SIZE));
+            return RecallResult.success(results, hasMore ? -1 : recallItems.length() + results.length());
+        } catch (Exception exception) {
+            return RecallResult.error("Não consegui buscar recolhimentos da Anvisa. Verifique a conexão e tente novamente.");
+        } finally {
+            if (connection != null) {
+                connection.disconnect();
+            }
+        }
+    }
+
+    private JSONArray parseAnvisaRecallItems(String html) {
+        JSONArray items = new JSONArray();
+        if (TextUtils.isEmpty(html)) {
+            return items;
+        }
+
+        Matcher articleMatcher = ANVISA_ARTICLE_PATTERN.matcher(html);
+        while (articleMatcher.find()) {
+            String article = articleMatcher.group(1);
+            Matcher titleMatcher = ANVISA_TITLE_PATTERN.matcher(article);
+            if (!titleMatcher.find()) {
+                continue;
+            }
+
+            String title = cleanHtmlText(titleMatcher.group(2));
+            String url = titleMatcher.group(1);
+            String summary = readAnvisaSummary(article);
+            String searchable = normalizeSearchText(title + " " + summary + " " + url);
+            if (!isBrazilianProductRecall(searchable)) {
+                continue;
+            }
+
+            try {
+                JSONObject item = new JSONObject();
+                item.put("title", title);
+                item.put("productName", extractAnvisaRecallProductName(title));
+                item.put("type", classifyAnvisaRecallType(title + " " + summary));
+                item.put("url", url);
+                item.put("date", readAnvisaDate(article));
+                item.put("summary", summary);
+                item.put("source", SOURCE_ANVISA);
+                items.put(item);
+            } catch (Exception ignored) {
+            }
+        }
+        return items;
+    }
+
+    private void enrichProductRecallAlert(ProductInfo product) {
+        if (product == null || (TextUtils.isEmpty(product.name) && TextUtils.isEmpty(product.brand))) {
+            return;
+        }
+
+        ArrayList<String> terms = productRecallTerms(product);
+        if (terms.isEmpty()) {
+            return;
+        }
+
+        int currentYear = Calendar.getInstance().get(Calendar.YEAR);
+        for (int year = currentYear; year >= Math.max(FIRST_RECALL_YEAR, currentYear - 1); year--) {
+            for (int offset = 0; offset < RECALL_PAGE_SIZE * 4; offset += RECALL_PAGE_SIZE) {
+                String html = fetchAnvisaNewsPage(year, offset);
+                if (TextUtils.isEmpty(html)) {
+                    continue;
+                }
+
+                JSONArray alerts = parseAnvisaRecallItems(html);
+                for (int index = 0; index < alerts.length(); index++) {
+                    JSONObject alert = alerts.optJSONObject(index);
+                    if (alert == null) {
+                        continue;
+                    }
+                    if (productMatchesRecallAlert(product, terms, alert, false)) {
+                        applyProductRecallAlert(product, alert);
+                        return;
+                    }
+
+                    String detail = fetchAnvisaRecallDetailText(alert.optString("url"));
+                    if (productMatchesRecallAlert(product, terms, alert, true, detail)) {
+                        applyProductRecallAlert(product, alert);
+                        return;
+                    }
+                }
+
+                if (!html.contains("b_start:int=" + (offset + RECALL_PAGE_SIZE))) {
+                    break;
+                }
+            }
+        }
+    }
+
+    private String fetchAnvisaNewsPage(int year, int offset) {
+        HttpURLConnection connection = null;
+        try {
+            URL url = new URL(ANVISA_NEWS_URL + year + "?b_start:int=" + offset);
+            connection = (HttpURLConnection) url.openConnection();
+            connection.setConnectTimeout(12000);
+            connection.setReadTimeout(12000);
+            connection.setRequestProperty("User-Agent", USER_AGENT);
+            if (connection.getResponseCode() < 200 || connection.getResponseCode() >= 300) {
+                return "";
+            }
+            return readText(connection.getInputStream());
+        } catch (Exception exception) {
+            return "";
+        } finally {
+            if (connection != null) {
+                connection.disconnect();
+            }
+        }
+    }
+
+    private String fetchAnvisaRecallDetailText(String url) {
+        if (TextUtils.isEmpty(url)) {
+            return "";
+        }
+        HttpURLConnection connection = null;
+        try {
+            URL pageUrl = new URL(url);
+            connection = (HttpURLConnection) pageUrl.openConnection();
+            connection.setConnectTimeout(12000);
+            connection.setReadTimeout(12000);
+            connection.setRequestProperty("User-Agent", USER_AGENT);
+            if (connection.getResponseCode() < 200 || connection.getResponseCode() >= 300) {
+                return "";
+            }
+            return normalizeSearchText(cleanHtmlText(readText(connection.getInputStream())));
+        } catch (Exception exception) {
+            return "";
+        } finally {
+            if (connection != null) {
+                connection.disconnect();
+            }
+        }
+    }
+
+    private ArrayList<String> productRecallTerms(ProductInfo product) {
+        ArrayList<String> terms = new ArrayList<>();
+        String[] entries = normalizeSearchText(product.name).split("\\s+");
+        for (String entry : entries) {
+            if (entry.length() >= 4 && !isIgnoredRecallTerm(entry)) {
+                addRecallTerm(terms, entry, 4);
+            }
+        }
+        addRecallTerm(terms, product.categories, 5);
+        return terms;
+    }
+
+    private void addRecallTerm(ArrayList<String> terms, String value, int minLength) {
+        String normalized = normalizeSearchText(value);
+        if (TextUtils.isEmpty(normalized)) {
+            return;
+        }
+        String[] entries = normalized.split("[,\\s]+");
+        for (String entry : entries) {
+            if (entry.length() >= minLength && !terms.contains(entry) && !isIgnoredRecallTerm(entry)) {
+                terms.add(entry);
+            }
+        }
+    }
+
+    private boolean isIgnoredRecallTerm(String term) {
+        return "produto".equals(term)
+                || "marca".equals(term)
+                || "sabor".equals(term)
+                || "tipo".equals(term)
+                || "sem".equals(term)
+                || "com".equals(term)
+                || "para".equals(term)
+                || "lote".equals(term)
+                || "lotes".equals(term)
+                || "unidade".equals(term);
+    }
+
+    private boolean productMatchesRecallAlert(ProductInfo product, ArrayList<String> terms, JSONObject alert, boolean detailChecked) {
+        return productMatchesRecallAlert(product, terms, alert, detailChecked, "");
+    }
+
+    private boolean productMatchesRecallAlert(ProductInfo product, ArrayList<String> terms, JSONObject alert, boolean detailChecked, String detailText) {
+        String alertText = normalizeSearchText(
+                alert.optString("productName")
+                        + " " + alert.optString("title")
+                        + " " + alert.optString("summary"))
+                + " " + firstNonEmpty(detailText, "");
+        if (TextUtils.isEmpty(alertText)) {
+            return false;
+        }
+
+        String normalizedBrand = normalizeSearchText(product.brand);
+        if (!TextUtils.isEmpty(normalizedBrand)) {
+            boolean brandMatched = false;
+            String[] brandTokens = normalizedBrand.split("[,\\s]+");
+            for (String token : brandTokens) {
+                if (token.length() >= 3 && alertText.contains(token)) {
+                    brandMatched = true;
+                    break;
+                }
+            }
+            if (brandMatched) {
+                for (String term : terms) {
+                    if (alertText.contains(term)) {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        int matches = 0;
+        for (String term : terms) {
+            if (alertText.contains(term)) {
+                matches++;
+            }
+        }
+        return matches >= 2;
+    }
+
+    private void applyProductRecallAlert(ProductInfo product, JSONObject alert) {
+        product.recallAlertTitle = alert.optString("title");
+        product.recallAlertProductName = firstNonEmpty(alert.optString("productName"), alert.optString("title"));
+        product.recallAlertType = alert.optString("type");
+        product.recallAlertDate = alert.optString("date");
+        product.recallAlertUrl = alert.optString("url");
+        product.recallAlertSource = firstNonEmpty(alert.optString("source"), SOURCE_ANVISA);
+    }
+
+    private boolean isBrazilianProductRecall(String normalizedText) {
+        if (TextUtils.isEmpty(normalizedText)) {
+            return false;
+        }
+        return normalizedText.contains("recolh")
+                || normalizedText.contains("proibid")
+                || normalizedText.contains("suspens")
+                || normalizedText.contains("apreens")
+                || normalizedText.contains("interdit")
+                || normalizedText.contains("contaminad")
+                || normalizedText.contains("irregular");
+    }
+
+    private String classifyAnvisaRecallType(String value) {
+        String text = normalizeSearchText(value);
+        boolean prohibited = text.contains("proibid") || text.contains("proibe");
+        boolean recalled = text.contains("recolh");
+        boolean suspended = text.contains("suspens");
+        boolean seized = text.contains("apreens");
+        boolean interdicted = text.contains("interdit");
+
+        if (prohibited && recalled) {
+            return "Proibição e recolhimento";
+        }
+        if (suspended && recalled) {
+            return "Suspensão e recolhimento";
+        }
+        if (prohibited) {
+            return "Proibição";
+        }
+        if (recalled) {
+            return "Recolhimento";
+        }
+        if (suspended) {
+            return "Suspensão";
+        }
+        if (seized) {
+            return "Apreensão";
+        }
+        if (interdicted) {
+            return "Interdição";
+        }
+        if (text.contains("contaminad")) {
+            return "Contaminação";
+        }
+        if (text.contains("irregular")) {
+            return "Irregularidade";
+        }
+        return "Alerta";
+    }
+
+    private String extractAnvisaRecallProductName(String title) {
+        if (TextUtils.isEmpty(title)) {
+            return "";
+        }
+        String product = title.trim()
+                .replaceAll("(?i)^anvisa\\s+", "")
+                .replaceAll("(?i)^determina(?:do)?\\s+recolhimento\\s+de\\s+", "")
+                .replaceAll("(?i)^determina\\s+recolhimento\\s+de\\s+", "")
+                .replaceAll("(?i)^recolhimento\\s+de\\s+", "")
+                .replaceAll("(?i)^lotes?\\s+de\\s+", "")
+                .replaceAll("(?i)^proibida\\s+venda\\s+de\\s+", "")
+                .replaceAll("(?i)^proibido\\s+(?:comércio|comercio|uso|consumo)\\s+de\\s+", "")
+                .replaceAll("(?i)^proíbe\\s+", "")
+                .replaceAll("(?i)^proibe\\s+", "")
+                .replaceAll("(?i)\\s+(?:é|e|são|sao|foi|foram|está|esta|estão|estao)\\s+(?:recolhid[oa]s?|proibid[oa]s?|apreendid[oa]s?|suspens[oa]s?).*$", "")
+                .replaceAll("(?i)^de\\s+", "")
+                .trim();
+        if (TextUtils.isEmpty(product)) {
+            return title.trim();
+        }
+        return product.substring(0, 1).toUpperCase(Locale.ROOT) + product.substring(1);
+    }
+
+    private String readAnvisaDate(String article) {
+        Matcher matcher = ANVISA_DATE_PATTERN.matcher(article);
+        if (!matcher.find()) {
+            return "";
+        }
+        String time = firstNonEmpty(matcher.group(2), "");
+        return matcher.group(1) + (TextUtils.isEmpty(time) ? "" : " " + time);
+    }
+
+    private String readAnvisaSummary(String article) {
+        Matcher matcher = ANVISA_SUMMARY_PATTERN.matcher(article);
+        if (!matcher.find()) {
+            return "";
+        }
+        return cleanHtmlText(matcher.group(1));
+    }
+
+    private String cleanHtmlText(String value) {
+        if (TextUtils.isEmpty(value)) {
+            return "";
+        }
+        String text = Html.fromHtml(value, Html.FROM_HTML_MODE_LEGACY).toString();
+        return text.replace('\u00A0', ' ').replaceAll("\\s+", " ").trim();
+    }
+
+    private void appendRecallItems(JSONArray newItems) {
+        if (newItems == null) {
+            return;
+        }
+        for (int index = 0; index < newItems.length(); index++) {
+            JSONObject item = newItems.optJSONObject(index);
+            if (item != null && !hasRecallItem(item.optString("url"))) {
+                recallItems.put(item);
+            }
+        }
+    }
+
+    private boolean hasRecallItem(String url) {
+        if (TextUtils.isEmpty(url)) {
+            return false;
+        }
+        for (int index = 0; index < recallItems.length(); index++) {
+            JSONObject item = recallItems.optJSONObject(index);
+            if (item != null && url.equals(item.optString("url"))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void renderRecallItems() {
+        txtSectionTitle.setText("");
+        txtSectionMeta.setText(recallMetaText());
+        dynamicContent.removeAllViews();
+
+        if (loadingRecalls && recallItems.length() == 0) {
+            addInfoCard("Carregando", "Buscando recolhimentos de " + selectedRecallYear + "...");
+            return;
+        }
+
+        JSONArray visibleItems = filterRecallItems(recallItems, normalizeSearchText(recallQuery));
+        if (visibleItems.length() == 0) {
+            if (recallItems.length() == 0) {
+                addInfoCard("Nenhum alerta encontrado", "Não encontrei notícias de recolhimento, proibição ou suspensão de produtos para " + selectedRecallYear + " nessa fonte.");
+            } else {
+                addInfoCard("Nenhum resultado", "Nenhum recolhimento carregado corresponde ao texto digitado.");
+            }
+            addLoadMoreRecallButtonIfNeeded();
+            addRecallSourceFootnote();
+            return;
+        }
+
+        for (int index = 0; index < visibleItems.length(); index++) {
+            JSONObject item = visibleItems.optJSONObject(index);
+            if (item != null) {
+                addRecallRow(item);
+            }
+        }
+        addLoadMoreRecallButtonIfNeeded();
+        addRecallSourceFootnote();
+    }
+
+    private JSONArray filterRecallItems(JSONArray items, String normalizedQuery) {
+        JSONArray filtered = new JSONArray();
+        for (int index = 0; index < items.length(); index++) {
+            JSONObject item = items.optJSONObject(index);
+            if (item == null) {
+                continue;
+            }
+            String searchableText = normalizeSearchText(
+                    item.optString("productName")
+                            + " " + item.optString("type")
+                            + " " + item.optString("title")
+                            + " " + item.optString("summary")
+                            + " " + item.optString("source"));
+            if (TextUtils.isEmpty(normalizedQuery) || searchableText.contains(normalizedQuery)) {
+                filtered.put(item);
+            }
+        }
+        return filtered;
+    }
+
+    private void addRecallRow(JSONObject item) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(android.view.Gravity.TOP);
+        row.setBackgroundResource(R.drawable.bg_result_row);
+        row.setPadding(dp(8), dp(8), dp(10), dp(8));
+
+        LinearLayout mediaColumn = new LinearLayout(this);
+        mediaColumn.setOrientation(LinearLayout.VERTICAL);
+        mediaColumn.setGravity(android.view.Gravity.TOP | android.view.Gravity.CENTER_HORIZONTAL);
+
+        ImageView image = new ImageView(this);
+        image.setBackgroundResource(R.drawable.bg_product_image);
+        image.setContentDescription("Alerta de " + firstNonEmpty(item.optString("type"), "produto").toLowerCase(Locale.ROOT));
+        image.setImageResource(R.drawable.ic_recall);
+        image.setColorFilter(getColor(R.color.one_ui_warning));
+        image.setPadding(dp(16), dp(16), dp(16), dp(16));
+        image.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+        LinearLayout.LayoutParams imageParams = new LinearLayout.LayoutParams(dp(72), dp(72));
+        mediaColumn.addView(image, imageParams);
+
+        TextView typeChip = createRecallTypeChip(item.optString("type"));
+        LinearLayout.LayoutParams chipParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        chipParams.setMargins(0, dp(6), 0, 0);
+        mediaColumn.addView(typeChip, chipParams);
+
+        LinearLayout.LayoutParams mediaParams = new LinearLayout.LayoutParams(dp(78), ViewGroup.LayoutParams.WRAP_CONTENT);
+        mediaParams.setMargins(0, 0, dp(10), 0);
+        row.addView(mediaColumn, mediaParams);
+
+        LinearLayout texts = new LinearLayout(this);
+        texts.setOrientation(LinearLayout.VERTICAL);
+
+        TextView productName = new TextView(this);
+        productName.setText(firstNonEmpty(item.optString("productName"), item.optString("title"), "Produto em alerta"));
+        productName.setTextColor(getColor(R.color.one_ui_text_primary));
+        productName.setTextSize(15);
+        productName.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        productName.setMaxLines(2);
+        texts.addView(productName);
+
+        TextView title = new TextView(this);
+        String titleText = firstNonEmpty(item.optString("title"), "Notificação sem título");
+        String url = item.optString("url");
+        title.setText(titleText);
+        title.setTextColor(getColor(TextUtils.isEmpty(url) ? R.color.one_ui_text_secondary : R.color.one_ui_accent));
+        title.setTextSize(12);
+        title.setMaxLines(3);
+        title.setPaintFlags(title.getPaintFlags() | android.graphics.Paint.UNDERLINE_TEXT_FLAG);
+        if (!TextUtils.isEmpty(url)) {
+            title.setClickable(true);
+            title.setFocusable(true);
+            title.setContentDescription("Abrir notificação completa: " + titleText);
+            title.setOnClickListener(view -> openExternalUrl(url));
+        }
+        LinearLayout.LayoutParams titleParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        titleParams.setMargins(0, dp(3), 0, 0);
+        texts.addView(title, titleParams);
+
+        TextView meta = new TextView(this);
+        meta.setText(firstNonEmpty(item.optString("source"), SOURCE_ANVISA)
+                + " · " + firstNonEmpty(item.optString("date"), "data não informada"));
+        meta.setTextColor(getColor(R.color.one_ui_text_secondary));
+        meta.setTextSize(12);
+        meta.setMaxLines(2);
+        LinearLayout.LayoutParams metaParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        metaParams.setMargins(0, dp(4), 0, 0);
+        texts.addView(meta, metaParams);
+
+        addOptionalRecallText(texts, "Resumo", item.optString("summary"), R.color.one_ui_text_secondary);
+        row.addView(texts, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        params.setMargins(0, 0, 0, dp(8));
+        dynamicContent.addView(row, params);
+        loadAnvisaRecallImage(image, item);
+    }
+
+    private TextView createRecallTypeChip(String type) {
+        TextView chip = new TextView(this);
+        String label = compactRecallType(type);
+        chip.setText(label);
+        chip.setGravity(android.view.Gravity.CENTER);
+        chip.setTextColor(getColor(recallTypeColorRes(type)));
+        chip.setTextSize(recallTypeTextSize(label));
+        chip.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        chip.setMaxLines(2);
+        chip.setIncludeFontPadding(false);
+        chip.setPadding(dp(4), dp(4), dp(4), dp(4));
+        chip.setBackground(roundedDrawable(getColor(R.color.one_ui_surface_alt), dp(14)));
+        return chip;
+    }
+
+    private String compactRecallType(String type) {
+        String normalized = normalizeSearchText(type);
+        if (normalized.contains("proib") && normalized.contains("recolh")) {
+            return "Proibido\nRecolhido";
+        }
+        if (normalized.contains("suspens") && normalized.contains("recolh")) {
+            return "Suspenso\nRecolhido";
+        }
+        if (normalized.contains("proib")) {
+            return "Proibido";
+        }
+        if (normalized.contains("recolh")) {
+            return "Recolhido";
+        }
+        if (normalized.contains("suspens")) {
+            return "Suspenso";
+        }
+        if (normalized.contains("apreens")) {
+            return "Apreendido";
+        }
+        if (normalized.contains("interdit")) {
+            return "Interditado";
+        }
+        if (normalized.contains("contamin")) {
+            return "Contaminado";
+        }
+        if (normalized.contains("irregular")) {
+            return "Irregular";
+        }
+        return firstNonEmpty(type, "Alerta");
+    }
+
+    private int recallTypeTextSize(String label) {
+        String longestLine = "";
+        String[] lines = firstNonEmpty(label, "").split("\\n");
+        for (String line : lines) {
+            if (line.length() > longestLine.length()) {
+                longestLine = line;
+            }
+        }
+        if (longestLine.length() <= 8) {
+            return 10;
+        }
+        if (longestLine.length() <= 10) {
+            return 9;
+        }
+        return 8;
+    }
+
+    private int recallTypeColorRes(String type) {
+        String normalized = normalizeSearchText(type);
+        if (normalized.contains("proib") || normalized.contains("apreens") || normalized.contains("interdit")) {
+            return R.color.one_ui_danger;
+        }
+        if (normalized.contains("recolh") || normalized.contains("suspens") || normalized.contains("contamin")) {
+            return R.color.one_ui_warning;
+        }
+        return R.color.one_ui_accent;
+    }
+
+    private void addOptionalRecallText(LinearLayout row, String label, String value, int colorRes) {
+        if (TextUtils.isEmpty(value)) {
+            return;
+        }
+        TextView text = new TextView(this);
+        text.setText(label + ": " + value);
+        text.setTextColor(getColor(colorRes));
+        text.setTextSize(12);
+        text.setLineSpacing(dp(2), 1f);
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        params.setMargins(0, dp(5), 0, 0);
+        row.addView(text, params);
+    }
+
+    private void addRecallNoticeLink(LinearLayout row, String titleText, String url) {
+        if (TextUtils.isEmpty(titleText)) {
+            return;
+        }
+
+        TextView link = new TextView(this);
+        link.setText(titleText);
+        link.setTextColor(getColor(TextUtils.isEmpty(url) ? R.color.one_ui_text_secondary : R.color.one_ui_accent));
+        link.setTextSize(13);
+        link.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        link.setLineSpacing(dp(2), 1f);
+        link.setPaintFlags(link.getPaintFlags() | android.graphics.Paint.UNDERLINE_TEXT_FLAG);
+        if (!TextUtils.isEmpty(url)) {
+            link.setClickable(true);
+            link.setFocusable(true);
+            link.setContentDescription("Abrir notificação completa: " + titleText);
+            link.setOnClickListener(view -> openExternalUrl(url));
+        }
+
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        params.setMargins(0, dp(8), 0, 0);
+        row.addView(link, params);
+    }
+
+    private void openExternalUrl(String url) {
+        try {
+            Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+            startActivity(intent);
+        } catch (Exception exception) {
+            showMessage("Não consegui abrir a notificação completa agora.");
+        }
+    }
+
+    private void loadAnvisaRecallImage(ImageView image, JSONObject item) {
+        String pageUrl = item.optString("url");
+        if (TextUtils.isEmpty(pageUrl)) {
+            return;
+        }
+
+        String cachedUrl = anvisaImageUrlCache.get(pageUrl);
+        if (cachedUrl != null) {
+            if (!TextUtils.isEmpty(cachedUrl)) {
+                loadImageIntoView(image, pageUrl, cachedUrl);
+            }
+            return;
+        }
+
+        image.setTag(pageUrl);
+        executor.execute(() -> {
+            String imageUrl = fetchAnvisaNewsImageUrl(pageUrl);
+            anvisaImageUrlCache.put(pageUrl, firstNonEmpty(imageUrl, ""));
+            if (!TextUtils.isEmpty(imageUrl)) {
+                mainHandler.post(() -> loadImageIntoView(image, pageUrl, imageUrl));
+            }
+        });
+    }
+
+    private String fetchAnvisaNewsImageUrl(String pageUrl) {
+        HttpURLConnection connection = null;
+        try {
+            URL url = new URL(pageUrl);
+            connection = (HttpURLConnection) url.openConnection();
+            connection.setConnectTimeout(12000);
+            connection.setReadTimeout(12000);
+            connection.setRequestProperty("User-Agent", USER_AGENT);
+            int responseCode = connection.getResponseCode();
+            if (responseCode < 200 || responseCode >= 300) {
+                return "";
+            }
+            String body = readText(connection.getInputStream());
+            Matcher imageMatcher = ANVISA_IMAGE_PATTERN.matcher(body);
+            while (imageMatcher.find()) {
+                String imageUrl = cleanHtmlText(imageMatcher.group(1));
+                if (isUsefulAnvisaImageUrl(imageUrl)) {
+                    return imageUrl;
+                }
+            }
+            return "";
+        } catch (Exception exception) {
+            return "";
+        } finally {
+            if (connection != null) {
+                connection.disconnect();
+            }
+        }
+    }
+
+    private boolean isUsefulAnvisaImageUrl(String imageUrl) {
+        if (TextUtils.isEmpty(imageUrl)) {
+            return false;
+        }
+        String normalized = imageUrl.toLowerCase(Locale.ROOT);
+        return (normalized.startsWith("http://") || normalized.startsWith("https://"))
+                && !normalized.endsWith("/logo.png")
+                && !normalized.contains("/logo.png")
+                && !normalized.contains("favicon");
+    }
+
+    private void loadImageIntoView(ImageView image, String key, String imageUrl) {
+        image.setTag(key);
+        executor.execute(() -> {
+            Bitmap bitmap = null;
+            HttpURLConnection connection = null;
+            try {
+                URL url = new URL(imageUrl);
+                connection = (HttpURLConnection) url.openConnection();
+                connection.setConnectTimeout(12000);
+                connection.setReadTimeout(12000);
+                connection.setRequestProperty("User-Agent", USER_AGENT);
+                try (InputStream stream = new BufferedInputStream(connection.getInputStream())) {
+                    bitmap = BitmapFactory.decodeStream(stream);
+                }
+            } catch (Exception ignored) {
+                bitmap = null;
+            } finally {
+                if (connection != null) {
+                    connection.disconnect();
+                }
+            }
+
+            Bitmap finalBitmap = bitmap;
+            mainHandler.post(() -> {
+                if (!key.equals(image.getTag()) || finalBitmap == null) {
+                    return;
+                }
+                image.clearColorFilter();
+                image.setPadding(0, 0, 0, 0);
+                image.setScaleType(ImageView.ScaleType.CENTER_CROP);
+                image.setImageBitmap(finalBitmap);
+            });
+        });
+    }
+
+    private void addLoadMoreRecallButtonIfNeeded() {
+        if (loadingRecalls || (recallTotal >= 0 && recallTotal <= recallItems.length())) {
+            return;
+        }
+        Button loadMore = new Button(this);
+        loadMore.setText("Carregar mais");
+        loadMore.setAllCaps(false);
+        loadMore.setTextColor(getColor(R.color.one_ui_text_primary));
+        loadMore.setTextSize(14);
+        loadMore.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        loadMore.setBackgroundResource(R.drawable.bg_button_secondary);
+        loadMore.setOnClickListener(view -> loadRecalls(false));
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                dp(46));
+        params.setMargins(0, dp(2), 0, dp(8));
+        dynamicContent.addView(loadMore, params);
+    }
+
+    private void addRecallSourceFootnote() {
+        TextView footnote = new TextView(this);
+        footnote.setText("Fonte: notícias públicas da Anvisa filtradas para recolhimentos, proibições, suspensões e alertas de produtos no Brasil.");
+        footnote.setTextColor(getColor(R.color.one_ui_text_muted));
+        footnote.setTextSize(12);
+        footnote.setLineSpacing(dp(2), 1f);
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        params.setMargins(0, dp(6), 0, dp(10));
+        dynamicContent.addView(footnote, params);
+    }
+
+    private String recallMetaText() {
+        String loadedText = recallItems.length() + (recallItems.length() == 1 ? " carregado" : " carregados");
+        if (recallTotal >= 0) {
+            loadedText += " de " + recallTotal;
+        }
+        return selectedRecallYear + " · " + loadedText;
+    }
+
+    private String formatRecallDate(String value) {
+        if (TextUtils.isEmpty(value) || value.length() != 8) {
+            return "data não informada";
+        }
+        return value.substring(6, 8) + "/" + value.substring(4, 6) + "/" + value.substring(0, 4);
+    }
+
+    private void showRecallYearMenu() {
+        PopupMenu menu = new PopupMenu(this, btnSort);
+        int currentYear = Calendar.getInstance().get(Calendar.YEAR);
+        for (int year = currentYear; year >= FIRST_RECALL_YEAR; year--) {
+            menu.getMenu().add(0, year, currentYear - year, year == selectedRecallYear ? year + " ✓" : String.valueOf(year));
+        }
+        menu.setOnMenuItemClickListener(item -> {
+            selectedRecallYear = item.getItemId();
+            loadRecalls(true);
+            return true;
+        });
+        menu.show();
     }
 
     private void showProfile() {
@@ -1677,6 +2666,7 @@ public class MainActivity extends AppCompatActivity {
         txtTitle.setTextSize(30);
         searchContainer.setVisibility(View.VISIBLE);
         configureSearchInput("Buscar na minha lista", listSearchQuery);
+        configureTextSearchAction("Buscar na minha lista");
         filtersScroll.setVisibility(View.GONE);
         btnSort.setVisibility(View.VISIBLE);
         cardStatus.setVisibility(View.GONE);
@@ -1790,6 +2780,16 @@ public class MainActivity extends AppCompatActivity {
         subtitle.setTextSize(12);
         subtitle.setMaxLines(1);
         texts.addView(subtitle);
+
+        if (!TextUtils.isEmpty(savedProduct.recallAlertTitle)) {
+            TextView recall = new TextView(this);
+            recall.setText(firstNonEmpty(savedProduct.recallAlertType, "Possível alerta") + " da Anvisa");
+            recall.setTextColor(getColor(R.color.one_ui_warning));
+            recall.setTextSize(12);
+            recall.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+            recall.setMaxLines(1);
+            texts.addView(recall);
+        }
 
         row.addView(texts, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
 
@@ -2526,6 +3526,7 @@ public class MainActivity extends AppCompatActivity {
         JSONObject json = new JSONObject();
         try {
             json.put("code", product.code);
+            json.put("cachedAt", product.cachedAt > 0 ? product.cachedAt : System.currentTimeMillis());
             json.put("name", product.name);
             json.put("brand", product.brand);
             json.put("imageUrl", product.imageUrl);
@@ -2557,6 +3558,12 @@ public class MainActivity extends AppCompatActivity {
             json.put("proteins", product.proteins);
             json.put("salt", product.salt);
             json.put("sodium", product.sodium);
+            json.put("recallAlertTitle", firstNonEmpty(product.recallAlertTitle, ""));
+            json.put("recallAlertProductName", firstNonEmpty(product.recallAlertProductName, ""));
+            json.put("recallAlertType", firstNonEmpty(product.recallAlertType, ""));
+            json.put("recallAlertDate", firstNonEmpty(product.recallAlertDate, ""));
+            json.put("recallAlertUrl", firstNonEmpty(product.recallAlertUrl, ""));
+            json.put("recallAlertSource", firstNonEmpty(product.recallAlertSource, ""));
         } catch (Exception ignored) {
         }
         return json;
@@ -2565,6 +3572,7 @@ public class MainActivity extends AppCompatActivity {
     private Map<String, Object> productToMap(ProductInfo product) {
         Map<String, Object> map = new HashMap<>();
         map.put("code", firstNonEmpty(product.code, ""));
+        map.put("cachedAt", product.cachedAt > 0 ? product.cachedAt : System.currentTimeMillis());
         map.put("name", firstNonEmpty(product.name, ""));
         map.put("brand", firstNonEmpty(product.brand, ""));
         map.put("imageUrl", firstNonEmpty(product.imageUrl, ""));
@@ -2596,6 +3604,12 @@ public class MainActivity extends AppCompatActivity {
         map.put("proteins", product.proteins);
         map.put("salt", product.salt);
         map.put("sodium", product.sodium);
+        map.put("recallAlertTitle", firstNonEmpty(product.recallAlertTitle, ""));
+        map.put("recallAlertProductName", firstNonEmpty(product.recallAlertProductName, ""));
+        map.put("recallAlertType", firstNonEmpty(product.recallAlertType, ""));
+        map.put("recallAlertDate", firstNonEmpty(product.recallAlertDate, ""));
+        map.put("recallAlertUrl", firstNonEmpty(product.recallAlertUrl, ""));
+        map.put("recallAlertSource", firstNonEmpty(product.recallAlertSource, ""));
         map.put("updatedAt", System.currentTimeMillis());
         return map;
     }
@@ -2656,6 +3670,7 @@ public class MainActivity extends AppCompatActivity {
         }
         ProductInfo product = new ProductInfo();
         product.code = item.optString("code");
+        product.cachedAt = item.optLong("cachedAt", 0);
         product.name = item.optString("name");
         product.brand = item.optString("brand");
         product.imageUrl = item.optString("imageUrl");
@@ -2683,6 +3698,12 @@ public class MainActivity extends AppCompatActivity {
         product.proteins = item.optDouble("proteins", -1);
         product.salt = item.optDouble("salt", -1);
         product.sodium = item.optDouble("sodium", -1);
+        product.recallAlertTitle = item.optString("recallAlertTitle");
+        product.recallAlertProductName = item.optString("recallAlertProductName");
+        product.recallAlertType = item.optString("recallAlertType");
+        product.recallAlertDate = item.optString("recallAlertDate");
+        product.recallAlertUrl = item.optString("recallAlertUrl");
+        product.recallAlertSource = item.optString("recallAlertSource");
         String savedScore = item.optString("score");
         int score = parseScore(savedScore);
         product.score = !TextUtils.isEmpty(savedScore) && score >= 0
@@ -2759,6 +3780,9 @@ public class MainActivity extends AppCompatActivity {
             JSONObject item = new JSONObject();
             try {
                 item.put("code", firstNonEmpty(document.getString("code"), document.getId()));
+                Long cachedAt = document.getLong("cachedAt");
+                Long updatedAt = document.getLong("updatedAt");
+                item.put("cachedAt", cachedAt != null ? cachedAt : (updatedAt != null ? updatedAt : 0));
                 item.put("name", firstNonEmpty(document.getString("name"), "Produto sem nome"));
                 item.put("brand", firstNonEmpty(document.getString("brand"), ""));
                 item.put("imageUrl", firstNonEmpty(document.getString("imageUrl"), ""));
@@ -2790,6 +3814,12 @@ public class MainActivity extends AppCompatActivity {
                 putDocumentNumber(item, document, "proteins");
                 putDocumentNumber(item, document, "salt");
                 putDocumentNumber(item, document, "sodium");
+                item.put("recallAlertTitle", firstNonEmpty(document.getString("recallAlertTitle"), ""));
+                item.put("recallAlertProductName", firstNonEmpty(document.getString("recallAlertProductName"), ""));
+                item.put("recallAlertType", firstNonEmpty(document.getString("recallAlertType"), ""));
+                item.put("recallAlertDate", firstNonEmpty(document.getString("recallAlertDate"), ""));
+                item.put("recallAlertUrl", firstNonEmpty(document.getString("recallAlertUrl"), ""));
+                item.put("recallAlertSource", firstNonEmpty(document.getString("recallAlertSource"), ""));
                 Long score = document.getLong("score");
                 item.put("score", score != null && score >= 0 ? String.valueOf(score) : "");
                 items.put(item);
@@ -3072,6 +4102,7 @@ public class MainActivity extends AppCompatActivity {
 
     private static class ProductInfo {
         String code;
+        long cachedAt;
         String name;
         String brand;
         String imageUrl;
@@ -3099,6 +4130,12 @@ public class MainActivity extends AppCompatActivity {
         double proteins = -1;
         double salt = -1;
         double sodium = -1;
+        String recallAlertTitle;
+        String recallAlertProductName;
+        String recallAlertType;
+        String recallAlertDate;
+        String recallAlertUrl;
+        String recallAlertSource;
         ScoreInfo score;
     }
 
@@ -3128,6 +4165,26 @@ public class MainActivity extends AppCompatActivity {
                     "Sem nota suficiente",
                     "Dados insuficientes",
                     "Não há dados suficientes para calcular uma nota.");
+        }
+    }
+
+    private static class RecallResult {
+        final JSONArray items;
+        final int total;
+        final String errorMessage;
+
+        private RecallResult(JSONArray items, int total, String errorMessage) {
+            this.items = items;
+            this.total = total;
+            this.errorMessage = errorMessage;
+        }
+
+        static RecallResult success(JSONArray items, int total) {
+            return new RecallResult(items, total, null);
+        }
+
+        static RecallResult error(String message) {
+            return new RecallResult(new JSONArray(), 0, message);
         }
     }
 

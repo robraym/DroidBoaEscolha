@@ -246,8 +246,8 @@ public class ScannerActivity extends androidx.activity.ComponentActivity {
 
         EditText input = new EditText(this);
         input.setSingleLine(true);
-        input.setInputType(InputType.TYPE_CLASS_NUMBER);
-        input.setFilters(new InputFilter[]{new InputFilter.LengthFilter(14)});
+        input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD);
+        input.setFilters(new InputFilter[]{digitsOnlyFilter(), new InputFilter.LengthFilter(14)});
         input.setHint("Ex.: 7891234567890");
         input.setTextColor(getColorCompat(R.color.one_ui_text_primary));
         input.setHintTextColor(getColorCompat(R.color.one_ui_text_muted));
@@ -330,6 +330,19 @@ public class ScannerActivity extends androidx.activity.ComponentActivity {
     private void cancelScan() {
         setResult(Activity.RESULT_CANCELED);
         finish();
+    }
+
+    private InputFilter digitsOnlyFilter() {
+        return (source, start, end, dest, dstart, dend) -> {
+            StringBuilder filtered = new StringBuilder();
+            for (int index = start; index < end; index++) {
+                char value = source.charAt(index);
+                if (Character.isDigit(value)) {
+                    filtered.append(value);
+                }
+            }
+            return filtered.length() == end - start ? null : filtered.toString();
+        };
     }
 
     private void showScannerMessage(String message) {

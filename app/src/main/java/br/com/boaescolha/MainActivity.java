@@ -477,6 +477,7 @@ public class MainActivity extends AppCompatActivity {
             return;
         }
         productReturnTab = returnTab;
+        sanitizeProductRecallAlert(savedProduct);
         if (isFreshSavedProduct(savedProduct, code)) {
             currentCode = code;
             showProduct(savedProduct);
@@ -527,6 +528,7 @@ public class MainActivity extends AppCompatActivity {
                         addLocalItem(KEY_SAVED_PRODUCTS, result.product);
                     }
                     showProduct(result.product);
+                    enrichProductRecallAlertInBackground(result.product);
                 }
             });
         });
@@ -542,14 +544,12 @@ public class MainActivity extends AppCompatActivity {
             }
             JSONObject mergedProduct = mergeProductData(primary.product, supplemental != null ? supplemental.product : null);
             ProductInfo product = buildProductInfo(code, mergedProduct, sourceSummary(primary, supplemental));
-            enrichProductRecallAlert(product);
             return ProductResult.success(product);
         }
 
         supplemental = fetchProductJson(OPEN_PRODUCTS_FACTS_API_URL, SOURCE_OPEN_PRODUCTS_FACTS, code);
         if (supplemental.product != null) {
             ProductInfo product = buildProductInfo(code, supplemental.product, sourceSummary(null, supplemental));
-            enrichProductRecallAlert(product);
             return ProductResult.success(product);
         }
 
@@ -1299,6 +1299,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void showProduct(ProductInfo product) {
+        sanitizeProductRecallAlert(product);
         configureProductDetailScreen();
         currentProduct = product;
 
@@ -1374,10 +1375,15 @@ public class MainActivity extends AppCompatActivity {
                 ViewGroup.LayoutParams.WRAP_CONTENT));
 
         txtClassification = new TextView(this);
-        txtClassification.setText(product.score.hasScore
+        boolean hasRecallAlert = !TextUtils.isEmpty(product.recallAlertTitle);
+        txtClassification.setText(hasRecallAlert
+                ? "Evite: alerta da Anvisa"
+                : product.score.hasScore
                 ? product.score.classification
                 : "Sem nota suficiente");
-        txtClassification.setTextColor(getColor(product.score.hasScore
+        txtClassification.setTextColor(getColor(hasRecallAlert
+                ? R.color.one_ui_danger
+                : product.score.hasScore
                 ? scoreColorRes(product.score.value)
                 : R.color.one_ui_text_secondary));
         txtClassification.setTextSize(15);
@@ -1994,12 +2000,6 @@ public class MainActivity extends AppCompatActivity {
                         applyProductRecallAlert(product, alert);
                         return;
                     }
-
-                    String detail = fetchAnvisaRecallDetailText(alert.optString("url"));
-                    if (productMatchesRecallAlert(product, terms, alert, true, detail)) {
-                        applyProductRecallAlert(product, alert);
-                        return;
-                    }
                 }
 
                 if (!html.contains("b_start:int=" + (offset + RECALL_PAGE_SIZE))) {
@@ -2007,6 +2007,30 @@ public class MainActivity extends AppCompatActivity {
                 }
             }
         }
+    }
+
+    private void enrichProductRecallAlertInBackground(ProductInfo product) {
+        if (product == null || TextUtils.isEmpty(product.code) || !TextUtils.isEmpty(product.recallAlertTitle)) {
+            return;
+        }
+
+        String code = product.code;
+        executor.execute(() -> {
+            enrichProductRecallAlert(product);
+            mainHandler.post(() -> {
+                if (TextUtils.isEmpty(product.recallAlertTitle)) {
+                    return;
+                }
+                addLocalItem(KEY_HISTORY, product);
+                if (isProductSaved(product.code)) {
+                    addLocalItem(KEY_SAVED_PRODUCTS, product);
+                }
+                if (showingProductDetails && code.equals(currentCode)) {
+                    showProduct(product);
+                    addDetailNotice("Alerta da Anvisa encontrado e adicionado ao produto.");
+                }
+            });
+        });
     }
 
     private String fetchAnvisaNewsPage(int year, int offset) {
@@ -2063,6 +2087,9 @@ public class MainActivity extends AppCompatActivity {
             }
         }
         addRecallTerm(terms, product.categories, 5);
+        for (String brandTerm : productBrandTerms(product)) {
+            terms.remove(brandTerm);
+        }
         return terms;
     }
 
@@ -2097,41 +2124,69 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private boolean productMatchesRecallAlert(ProductInfo product, ArrayList<String> terms, JSONObject alert, boolean detailChecked, String detailText) {
-        String alertText = normalizeSearchText(
-                alert.optString("productName")
-                        + " " + alert.optString("title")
-                        + " " + alert.optString("summary"))
-                + " " + firstNonEmpty(detailText, "");
+        String alertText = normalizedRecallAlertText(alert);
         if (TextUtils.isEmpty(alertText)) {
             return false;
         }
 
-        String normalizedBrand = normalizeSearchText(product.brand);
-        if (!TextUtils.isEmpty(normalizedBrand)) {
-            boolean brandMatched = false;
-            String[] brandTokens = normalizedBrand.split("[,\\s]+");
-            for (String token : brandTokens) {
-                if (token.length() >= 3 && alertText.contains(token)) {
-                    brandMatched = true;
-                    break;
-                }
+        ArrayList<String> productTerms = productRecallTerms(product);
+        ArrayList<String> brandTerms = productBrandTerms(product);
+        if (!brandTerms.isEmpty()) {
+            if (!containsAnyRecallTerm(alertText, brandTerms)) {
+                return false;
             }
-            if (brandMatched) {
-                for (String term : terms) {
-                    if (alertText.contains(term)) {
-                        return true;
-                    }
-                }
-            }
+            return containsAnyRecallTerm(alertText, productTerms);
         }
 
         int matches = 0;
-        for (String term : terms) {
-            if (alertText.contains(term)) {
+        for (String term : productTerms) {
+            if (containsRecallTerm(alertText, term)) {
                 matches++;
             }
         }
-        return matches >= 2;
+        return matches >= 3;
+    }
+
+    private String normalizedRecallAlertText(JSONObject alert) {
+        if (alert == null) {
+            return "";
+        }
+        return normalizeSearchText(
+                alert.optString("productName")
+                        + " " + alert.optString("title")
+                        + " " + alert.optString("summary"));
+    }
+
+    private ArrayList<String> productBrandTerms(ProductInfo product) {
+        ArrayList<String> terms = new ArrayList<>();
+        if (product == null) {
+            return terms;
+        }
+        String[] entries = normalizeSearchText(product.brand).split("[,\\s]+");
+        for (String entry : entries) {
+            if (entry.length() >= 3 && !isIgnoredRecallTerm(entry) && !terms.contains(entry)) {
+                terms.add(entry);
+            }
+        }
+        return terms;
+    }
+
+    private boolean containsAnyRecallTerm(String text, ArrayList<String> terms) {
+        for (String term : terms) {
+            if (containsRecallTerm(text, term)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean containsRecallTerm(String text, String term) {
+        if (TextUtils.isEmpty(text) || TextUtils.isEmpty(term)) {
+            return false;
+        }
+        return Pattern.compile("(^|[^a-z0-9])" + Pattern.quote(term) + "([^a-z0-9]|$)")
+                .matcher(text)
+                .find();
     }
 
     private void applyProductRecallAlert(ProductInfo product, JSONObject alert) {
@@ -2141,6 +2196,31 @@ public class MainActivity extends AppCompatActivity {
         product.recallAlertDate = alert.optString("date");
         product.recallAlertUrl = alert.optString("url");
         product.recallAlertSource = firstNonEmpty(alert.optString("source"), SOURCE_ANVISA);
+    }
+
+    private void sanitizeProductRecallAlert(ProductInfo product) {
+        if (product == null || TextUtils.isEmpty(product.recallAlertTitle)) {
+            return;
+        }
+        try {
+            JSONObject alert = new JSONObject();
+            alert.put("title", product.recallAlertTitle);
+            alert.put("productName", product.recallAlertProductName);
+            if (!productMatchesRecallAlert(product, productRecallTerms(product), alert, false)) {
+                clearProductRecallAlert(product);
+            }
+        } catch (Exception exception) {
+            clearProductRecallAlert(product);
+        }
+    }
+
+    private void clearProductRecallAlert(ProductInfo product) {
+        product.recallAlertTitle = "";
+        product.recallAlertProductName = "";
+        product.recallAlertType = "";
+        product.recallAlertDate = "";
+        product.recallAlertUrl = "";
+        product.recallAlertSource = "";
     }
 
     private boolean isBrazilianProductRecall(String normalizedText) {
@@ -2841,7 +2921,11 @@ public class MainActivity extends AppCompatActivity {
         ProductInfo savedProduct = productFromJson(item);
         String name = firstNonEmpty(item.optString("name"), "Produto sem nome");
         String brand = firstNonEmpty(item.optString("brand"), "Marca não informada");
-        String classification = firstNonEmpty(item.optString("classification"), "Sem nota suficiente");
+        String classification = !TextUtils.isEmpty(savedProduct.recallAlertTitle)
+                ? "Evite: alerta da Anvisa"
+                : savedProduct.score != null && savedProduct.score.hasScore
+                ? savedProduct.score.classification
+                : "Sem nota suficiente";
         String score = item.optString("score");
 
         LinearLayout row = new LinearLayout(this);
@@ -2851,19 +2935,39 @@ public class MainActivity extends AppCompatActivity {
         row.setPadding(dp(6), dp(6), dp(6), dp(6));
         row.setOnClickListener(view -> openProductDetails(code, returnTab, savedProduct));
 
+        FrameLayout productPreview = new FrameLayout(this);
+
+        ImageView productImage = new ImageView(this);
+        productImage.setBackgroundResource(R.drawable.bg_product_image);
+        productImage.setContentDescription("Imagem do produto");
+        productImage.setImageResource(R.drawable.ic_scan);
+        productImage.setColorFilter(getColor(R.color.one_ui_text_muted));
+        productImage.setPadding(dp(12), dp(12), dp(12), dp(12));
+        productImage.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+        productPreview.addView(productImage, new FrameLayout.LayoutParams(dp(52), dp(52)));
+        if (!TextUtils.isEmpty(savedProduct.imageUrl)) {
+            productImage.setTag(code);
+            loadImageIntoView(productImage, code, savedProduct.imageUrl);
+        }
+
         TextView scoreView = new TextView(this);
         scoreView.setGravity(android.view.Gravity.CENTER);
         scoreView.setText(TextUtils.isEmpty(score) ? "-" : score);
         scoreView.setTextColor(getColor(android.R.color.white));
-        scoreView.setTextSize(11);
+        scoreView.setTextSize(10);
         scoreView.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
         scoreView.setBackgroundResource(R.drawable.bg_score_circle);
         if (scoreView.getBackground() instanceof GradientDrawable) {
             GradientDrawable background = (GradientDrawable) scoreView.getBackground().mutate();
             background.setColor(getColor(scoreColorRes(parseScore(score))));
         }
-        LinearLayout.LayoutParams scoreParams = new LinearLayout.LayoutParams(dp(36), dp(36));
-        row.addView(scoreView, scoreParams);
+        FrameLayout.LayoutParams scoreParams = new FrameLayout.LayoutParams(dp(28), dp(28));
+        scoreParams.gravity = android.view.Gravity.TOP | android.view.Gravity.END;
+        scoreParams.setMargins(0, dp(-2), dp(-2), 0);
+        productPreview.addView(scoreView, scoreParams);
+
+        LinearLayout.LayoutParams previewParams = new LinearLayout.LayoutParams(dp(52), dp(52));
+        row.addView(productPreview, previewParams);
 
         LinearLayout texts = new LinearLayout(this);
         texts.setOrientation(LinearLayout.VERTICAL);
@@ -2885,7 +2989,7 @@ public class MainActivity extends AppCompatActivity {
 
         if (!TextUtils.isEmpty(savedProduct.recallAlertTitle)) {
             TextView recall = new TextView(this);
-            recall.setText(firstNonEmpty(savedProduct.recallAlertType, "Possível alerta") + " da Anvisa");
+            recall.setText(firstNonEmpty(savedProduct.recallAlertType, "Alerta") + " da Anvisa");
             recall.setTextColor(getColor(R.color.one_ui_warning));
             recall.setTextSize(12);
             recall.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
@@ -3594,6 +3698,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void addLocalItem(String key, ProductInfo product) {
+        sanitizeProductRecallAlert(product);
         JSONArray oldItems = readLocalItems(key);
         JSONArray newItems = new JSONArray();
         newItems.put(productToJson(product));
@@ -3836,6 +3941,7 @@ public class MainActivity extends AppCompatActivity {
                         firstNonEmpty(item.optString("scoreSource"), "Boa Escolha"),
                         firstNonEmpty(item.optString("explanation"), "Nota salva anteriormente no Boa Escolha."))
                 : ScoreInfo.withoutScore();
+        sanitizeProductRecallAlert(product);
         return product;
     }
 

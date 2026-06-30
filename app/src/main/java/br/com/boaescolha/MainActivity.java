@@ -54,6 +54,8 @@ import com.google.firebase.firestore.FirebaseFirestore;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.io.File;
+import java.io.FileOutputStream;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.io.BufferedInputStream;
@@ -63,6 +65,7 @@ import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.text.Normalizer;
 import java.util.Calendar;
 import java.util.Locale;
@@ -98,11 +101,13 @@ public class MainActivity extends AppCompatActivity {
     private static final int RECALL_PAGE_SIZE = 20;
     private static final int FIRST_RECALL_YEAR = 2020;
     private static final long PRODUCT_CACHE_TTL_MS = 6L * 60L * 60L * 1000L;
+    private static final String PRODUCT_IMAGE_CACHE_DIR = "product_images";
     private static final Pattern ANVISA_ARTICLE_PATTERN = Pattern.compile("(?is)<article class=\"entry\">(.*?)</article>");
     private static final Pattern ANVISA_TITLE_PATTERN = Pattern.compile("(?is)<a href=\"([^\"]+)\"[^>]*>(.*?)</a>");
     private static final Pattern ANVISA_DATE_PATTERN = Pattern.compile("(?is)última modificação\\s*([0-9]{2}/[0-9]{2}/[0-9]{4})\\s*([0-9]{2}h[0-9]{2})?");
     private static final Pattern ANVISA_SUMMARY_PATTERN = Pattern.compile("(?is)<p class=\"summary[^>]*>(.*?)</p>");
     private static final Pattern ANVISA_IMAGE_PATTERN = Pattern.compile("(?is)<meta[^>]+(?:property|name)=\"(?:og:image|twitter:image|image)\"[^>]+content=\"([^\"]+)\"[^>]*>");
+    private static final Pattern ANVISA_PAGE_IMAGE_PATTERN = Pattern.compile("(?is)<img\\b[^>]+(?:src|data-src|data-lazy-src)=[\"']([^\"']+)[\"'][^>]*>");
     private static final int TAB_SEARCH = 2;
     private static final int TAB_LISTS = 3;
     private static final int TAB_RECALLS = 4;
@@ -1700,26 +1705,7 @@ public class MainActivity extends AppCompatActivity {
 
     private void loadImage(String imageUrl, String code) {
         executor.execute(() -> {
-            Bitmap bitmap = null;
-            HttpURLConnection connection = null;
-            try {
-                URL url = new URL(imageUrl);
-                connection = (HttpURLConnection) url.openConnection();
-                connection.setConnectTimeout(12000);
-                connection.setReadTimeout(12000);
-                connection.setRequestProperty("User-Agent", USER_AGENT);
-                try (InputStream stream = new BufferedInputStream(connection.getInputStream())) {
-                    bitmap = BitmapFactory.decodeStream(stream);
-                }
-            } catch (Exception ignored) {
-                bitmap = null;
-            } finally {
-                if (connection != null) {
-                    connection.disconnect();
-                }
-            }
-
-            Bitmap finalBitmap = bitmap;
+            Bitmap finalBitmap = loadCachedImage(imageUrl);
             mainHandler.post(() -> {
                 if (!code.equals(currentCode)) {
                     return;
@@ -1733,6 +1719,113 @@ public class MainActivity extends AppCompatActivity {
                 }
             });
         });
+    }
+
+    private Bitmap loadCachedImage(String imageUrl) {
+        File cacheFile = getImageCacheFile(imageUrl);
+        Bitmap cachedBitmap = decodeCachedImage(cacheFile);
+        if (cachedBitmap != null) {
+            return cachedBitmap;
+        }
+
+        Bitmap downloadedBitmap = downloadImageToCache(imageUrl, cacheFile);
+        if (downloadedBitmap != null) {
+            return downloadedBitmap;
+        }
+
+        return decodeCachedImage(cacheFile);
+    }
+
+    private Bitmap decodeCachedImage(File cacheFile) {
+        if (cacheFile == null || !cacheFile.exists() || cacheFile.length() <= 0) {
+            return null;
+        }
+
+        Bitmap bitmap = BitmapFactory.decodeFile(cacheFile.getAbsolutePath());
+        if (bitmap == null) {
+            cacheFile.delete();
+        }
+        return bitmap;
+    }
+
+    private Bitmap downloadImageToCache(String imageUrl, File cacheFile) {
+        if (TextUtils.isEmpty(imageUrl)) {
+            return null;
+        }
+
+        HttpURLConnection connection = null;
+        File tempFile = cacheFile != null
+                ? new File(cacheFile.getAbsolutePath() + "." + System.nanoTime() + ".tmp")
+                : null;
+        try {
+            URL url = new URL(imageUrl);
+            connection = (HttpURLConnection) url.openConnection();
+            connection.setConnectTimeout(12000);
+            connection.setReadTimeout(12000);
+            connection.setRequestProperty("User-Agent", USER_AGENT);
+            int responseCode = connection.getResponseCode();
+            if (responseCode >= 400) {
+                return null;
+            }
+
+            try (InputStream stream = new BufferedInputStream(connection.getInputStream())) {
+                if (tempFile == null) {
+                    return BitmapFactory.decodeStream(stream);
+                }
+
+                try (FileOutputStream output = new FileOutputStream(tempFile)) {
+                    byte[] buffer = new byte[8192];
+                    int read;
+                    while ((read = stream.read(buffer)) != -1) {
+                        output.write(buffer, 0, read);
+                    }
+                }
+            }
+
+            Bitmap bitmap = BitmapFactory.decodeFile(tempFile.getAbsolutePath());
+            if (bitmap != null) {
+                if ((!cacheFile.exists() || cacheFile.delete()) && tempFile.renameTo(cacheFile)) {
+                    tempFile = null;
+                }
+                return bitmap;
+            }
+        } catch (Exception ignored) {
+            return null;
+        } finally {
+            if (connection != null) {
+                connection.disconnect();
+            }
+            if (tempFile != null && tempFile.exists()) {
+                tempFile.delete();
+            }
+        }
+        return null;
+    }
+
+    private File getImageCacheFile(String imageUrl) {
+        if (TextUtils.isEmpty(imageUrl)) {
+            return null;
+        }
+
+        File cacheDir = new File(getFilesDir(), PRODUCT_IMAGE_CACHE_DIR);
+        if (!cacheDir.exists() && !cacheDir.mkdirs()) {
+            return null;
+        }
+        return new File(cacheDir, sha256(imageUrl) + ".img");
+    }
+
+    private String sha256(String value) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] hash = digest.digest(value.getBytes(StandardCharsets.UTF_8));
+            StringBuilder builder = new StringBuilder(hash.length * 2);
+            for (byte item : hash) {
+                builder.append(String.format(Locale.ROOT, "%02x", item & 0xff));
+            }
+            return builder.toString();
+        } catch (Exception exception) {
+            return String.valueOf(value.hashCode());
+        }
     }
 
     private void setLoading(boolean loading) {
@@ -2649,9 +2742,17 @@ public class MainActivity extends AppCompatActivity {
                 return "";
             }
             String body = readText(connection.getInputStream());
+            Matcher pageImageMatcher = ANVISA_PAGE_IMAGE_PATTERN.matcher(body);
+            while (pageImageMatcher.find()) {
+                String imageUrl = resolveAnvisaImageUrl(pageUrl, cleanHtmlText(pageImageMatcher.group(1)));
+                if (isUsefulAnvisaImageUrl(imageUrl)) {
+                    return imageUrl;
+                }
+            }
+
             Matcher imageMatcher = ANVISA_IMAGE_PATTERN.matcher(body);
             while (imageMatcher.find()) {
-                String imageUrl = cleanHtmlText(imageMatcher.group(1));
+                String imageUrl = resolveAnvisaImageUrl(pageUrl, cleanHtmlText(imageMatcher.group(1)));
                 if (isUsefulAnvisaImageUrl(imageUrl)) {
                     return imageUrl;
                 }
@@ -2666,6 +2767,17 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    private String resolveAnvisaImageUrl(String pageUrl, String imageUrl) {
+        if (TextUtils.isEmpty(imageUrl)) {
+            return "";
+        }
+        try {
+            return new URL(new URL(pageUrl), imageUrl).toString();
+        } catch (Exception exception) {
+            return imageUrl;
+        }
+    }
+
     private boolean isUsefulAnvisaImageUrl(String imageUrl) {
         if (TextUtils.isEmpty(imageUrl)) {
             return false;
@@ -2674,32 +2786,19 @@ public class MainActivity extends AppCompatActivity {
         return (normalized.startsWith("http://") || normalized.startsWith("https://"))
                 && !normalized.endsWith("/logo.png")
                 && !normalized.contains("/logo.png")
-                && !normalized.contains("favicon");
+                && !normalized.contains("favicon")
+                && !normalized.contains("govbr")
+                && !normalized.contains("barra-brasil")
+                && !normalized.contains("avatar")
+                && !normalized.contains("placeholder")
+                && !normalized.contains("sprite")
+                && !normalized.endsWith(".svg");
     }
 
     private void loadImageIntoView(ImageView image, String key, String imageUrl) {
         image.setTag(key);
         executor.execute(() -> {
-            Bitmap bitmap = null;
-            HttpURLConnection connection = null;
-            try {
-                URL url = new URL(imageUrl);
-                connection = (HttpURLConnection) url.openConnection();
-                connection.setConnectTimeout(12000);
-                connection.setReadTimeout(12000);
-                connection.setRequestProperty("User-Agent", USER_AGENT);
-                try (InputStream stream = new BufferedInputStream(connection.getInputStream())) {
-                    bitmap = BitmapFactory.decodeStream(stream);
-                }
-            } catch (Exception ignored) {
-                bitmap = null;
-            } finally {
-                if (connection != null) {
-                    connection.disconnect();
-                }
-            }
-
-            Bitmap finalBitmap = bitmap;
+            Bitmap finalBitmap = loadCachedImage(imageUrl);
             mainHandler.post(() -> {
                 if (!key.equals(image.getTag()) || finalBitmap == null) {
                     return;

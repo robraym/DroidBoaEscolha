@@ -48,9 +48,9 @@
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:text="Busca"
+                    android:text="Pesquisar"
                     android:textColor="@color/one_ui_text_primary"
-                    android:textSize="30sp"
+                    android:textSize="26sp"
                     android:textStyle="bold" />
 
                 <ImageButton
@@ -66,50 +66,6 @@
 
             </LinearLayout>
 
-            <LinearLayout
-                android:id="@+id/searchContainer"
-                android:layout_width="match_parent"
-                android:layout_height="54dp"
-                android:layout_marginTop="18dp"
-                android:background="@drawable/bg_search_bar"
-                android:gravity="center_vertical"
-                android:orientation="horizontal">
-
-                <ImageView
-                    android:layout_width="30dp"
-                    android:layout_height="30dp"
-                    android:contentDescription="@string/consult_code"
-                    android:padding="5dp"
-                    android:src="@drawable/ic_search" />
-
-                <EditText
-                    android:id="@+id/editSearch"
-                    android:layout_width="0dp"
-                    android:layout_height="match_parent"
-                    android:layout_marginStart="6dp"
-                    android:layout_weight="1"
-                    android:background="@color/transparent"
-                    android:hint="Buscar produto ou marca"
-                    android:imeOptions="actionSearch"
-                    android:inputType="textCapSentences"
-                    android:maxLines="1"
-                    android:singleLine="true"
-                    android:textColor="@color/one_ui_text_primary"
-                    android:textColorHint="@color/one_ui_text_secondary"
-                    android:textSize="16sp" />
-
-                <ImageButton
-                    android:id="@+id/btnSearch"
-                    android:layout_width="42dp"
-                    android:layout_height="42dp"
-                    android:layout_marginEnd="4dp"
-                    android:background="@drawable/bg_icon_action"
-                    android:contentDescription="Escanear produto"
-                    android:padding="9dp"
-                    android:src="@drawable/ic_scan"
-                    android:tint="@color/one_ui_accent" />
-            </LinearLayout>
-
             <Space
                 android:id="@+id/filtersScroll"
                 android:layout_width="match_parent"
@@ -120,7 +76,7 @@
                 android:id="@+id/sectionHeader"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="20dp"
+                android:layout_marginTop="6dp"
                 android:gravity="center_vertical"
                 android:orientation="horizontal"
                 android:paddingEnd="0dp">
@@ -160,7 +116,7 @@
                 android:id="@+id/dynamicContent"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
+                android:layout_marginTop="4dp"
                 android:orientation="vertical"
                 android:visibility="gone" />
 
@@ -293,17 +249,16 @@
                         android:textColor="@color/one_ui_text_secondary"
                         android:textSize="12sp" />
 
-                    <Button
+                    <ImageButton
                         android:id="@+id/btnSaveProduct"
-                        android:layout_width="112dp"
-                        android:layout_height="34dp"
+                        android:layout_width="40dp"
+                        android:layout_height="40dp"
                         android:layout_marginTop="6dp"
-                        android:background="@drawable/bg_button_secondary"
-                        android:text="Salvar"
-                        android:textAllCaps="false"
-                        android:textColor="@color/one_ui_text_primary"
-                        android:textSize="13sp"
-                        android:textStyle="bold" />
+                        android:background="@drawable/bg_icon_action"
+                        android:contentDescription="Salvar na lista"
+                        android:padding="9dp"
+                        android:scaleType="center"
+                        android:src="@drawable/ic_star" />
                 </LinearLayout>
 
                 <ImageView
@@ -325,6 +280,56 @@
                 android:textSize="12sp" />
         </LinearLayout>
     </ScrollView>
+
+    <LinearLayout
+        android:id="@+id/searchContainer"
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:layout_gravity="bottom|center_horizontal"
+        android:layout_marginStart="58dp"
+        android:layout_marginEnd="58dp"
+        android:layout_marginBottom="92dp"
+        android:background="@drawable/bg_search_bar"
+        android:elevation="12dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:translationZ="12dp">
+
+        <ImageView
+            android:layout_width="30dp"
+            android:layout_height="30dp"
+            android:contentDescription="@string/consult_code"
+            android:padding="5dp"
+            android:src="@drawable/ic_search"
+            android:tint="@color/one_ui_text_secondary" />
+
+        <EditText
+            android:id="@+id/editSearch"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_marginStart="6dp"
+            android:layout_weight="1"
+            android:background="@color/transparent"
+            android:hint="Pesquisar"
+            android:imeOptions="actionSearch"
+            android:inputType="textCapSentences"
+            android:maxLines="1"
+            android:singleLine="true"
+            android:textColor="@color/one_ui_text_primary"
+            android:textColorHint="@color/one_ui_text_secondary"
+            android:textSize="18sp" />
+
+        <ImageButton
+            android:id="@+id/btnSearch"
+            android:layout_width="42dp"
+            android:layout_height="42dp"
+            android:layout_marginEnd="4dp"
+            android:background="@drawable/bg_icon_action"
+            android:contentDescription="Escanear produto"
+            android:padding="9dp"
+            android:src="@drawable/ic_scan"
+            android:tint="@color/one_ui_accent" />
+    </LinearLayout>
 
     <LinearLayout
         android:id="@+id/bottomNav"
@@ -365,7 +370,7 @@
                 android:id="@+id/textSearch"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Busca"
+                android:text="Pesquisar"
                 android:textColor="@color/one_ui_text_secondary"
                 android:textSize="11sp" />
         </LinearLayout>

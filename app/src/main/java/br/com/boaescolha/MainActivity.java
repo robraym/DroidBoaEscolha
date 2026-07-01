@@ -8,7 +8,12 @@ import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.LinearGradient;
+import android.graphics.Paint;
+import android.graphics.RectF;
+import android.graphics.Shader;
 import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
@@ -21,6 +26,7 @@ import android.text.TextUtils;
 import android.text.TextWatcher;
 import android.util.Log;
 import android.view.KeyEvent;
+import android.view.SubMenu;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.inputmethod.EditorInfo;
@@ -103,7 +109,14 @@ public class MainActivity extends AppCompatActivity {
     private static final String THEME_DARK = "dark";
     private static final String SCREEN_SETTINGS = "settings";
     private static final int MAX_LOCAL_ITEMS = 20;
-    private static final int RECALL_PAGE_SIZE = 20;
+    private static final int RECALL_PAGE_SIZE = 400;
+    private static final int PRODUCT_RECALL_PAGE_SIZE = 20;
+    private static final int MAX_RECALL_AUTO_PAGES = 4;
+    private static final int RECALL_FILTER_GROUP_YEAR = 101;
+    private static final int RECALL_FILTER_GROUP_MONTH = 102;
+    private static final int RECALL_FILTER_GROUP_STATUS = 103;
+    private static final int RECALL_FILTER_GROUP_ACTION = 104;
+    private static final int RECALL_FILTER_GROUP_ORDER = 105;
     private static final int FIRST_RECALL_YEAR = 2020;
     private static final long PRODUCT_CACHE_TTL_MS = 6L * 60L * 60L * 1000L;
     private static final String PRODUCT_IMAGE_CACHE_DIR = "product_images";
@@ -111,8 +124,6 @@ public class MainActivity extends AppCompatActivity {
     private static final Pattern ANVISA_TITLE_PATTERN = Pattern.compile("(?is)<a href=\"([^\"]+)\"[^>]*>(.*?)</a>");
     private static final Pattern ANVISA_DATE_PATTERN = Pattern.compile("(?is)última modificação\\s*([0-9]{2}/[0-9]{2}/[0-9]{4})\\s*([0-9]{2}h[0-9]{2})?");
     private static final Pattern ANVISA_SUMMARY_PATTERN = Pattern.compile("(?is)<p class=\"summary[^>]*>(.*?)</p>");
-    private static final Pattern ANVISA_IMAGE_PATTERN = Pattern.compile("(?is)<meta[^>]+(?:property|name)=\"(?:og:image|twitter:image|image)\"[^>]+content=\"([^\"]+)\"[^>]*>");
-    private static final Pattern ANVISA_PAGE_IMAGE_PATTERN = Pattern.compile("(?is)<img\\b[^>]+(?:src|data-src|data-lazy-src)=[\"']([^\"']+)[\"'][^>]*>");
     private static final int TAB_SEARCH = 2;
     private static final int TAB_LISTS = 3;
     private static final int TAB_RECALLS = 4;
@@ -151,7 +162,7 @@ public class MainActivity extends AppCompatActivity {
     private TextView txtExplanation;
     private ImageButton btnSearch;
     private ImageButton btnProfile;
-    private Button btnSaveProduct;
+    private ImageButton btnSaveProduct;
     private View indicatorSearch;
     private View indicatorLists;
     private View indicatorRecalls;
@@ -179,11 +190,14 @@ public class MainActivity extends AppCompatActivity {
     private String listSearchQuery = "";
     private String recallQuery = "";
     private JSONArray recallItems = new JSONArray();
-    private final Map<String, String> anvisaImageUrlCache = new HashMap<>();
     private int selectedRecallYear = Calendar.getInstance().get(Calendar.YEAR);
+    private int selectedRecallMonth;
+    private int selectedRecallStatus;
+    private boolean recallNewestFirst = true;
     private int loadedRecallYear = -1;
     private int recallOffset;
     private int recallTotal = -1;
+    private int recallLoadedPages;
     private boolean loadingRecalls;
     private boolean suppressSearchUpdates;
 
@@ -239,7 +253,7 @@ public class MainActivity extends AppCompatActivity {
         btnSaveProduct.setOnClickListener(view -> saveCurrentProduct());
         btnSort.setOnClickListener(view -> {
             if (activeTab == TAB_RECALLS) {
-                showRecallYearMenu();
+                showRecallFilterMenu();
             } else {
                 showSortMenu();
             }
@@ -347,18 +361,41 @@ public class MainActivity extends AppCompatActivity {
         updateBottomNavigationSpacing();
     }
 
+    private void setSearchVisible(boolean visible) {
+        if (searchContainer != null) {
+            searchContainer.setVisibility(visible ? View.VISIBLE : View.GONE);
+        }
+        updateBottomNavigationSpacing();
+    }
+
     private void updateBottomNavigationSpacing() {
         boolean navVisible = bottomNav != null && bottomNav.getVisibility() == View.VISIBLE;
+        boolean searchVisible = searchContainer != null && searchContainer.getVisibility() == View.VISIBLE;
+
+        if (searchContainer != null && searchContainer.getLayoutParams() instanceof ViewGroup.MarginLayoutParams) {
+            ViewGroup.MarginLayoutParams params = (ViewGroup.MarginLayoutParams) searchContainer.getLayoutParams();
+            int targetBottomMargin = navigationInsetBottom + (navVisible ? dp(82) : dp(22));
+            if (params.bottomMargin != targetBottomMargin) {
+                params.bottomMargin = targetBottomMargin;
+                searchContainer.setLayoutParams(params);
+            }
+        }
+
+        int overlayPadding = navigationInsetBottom + (navVisible ? dp(86) : dp(16));
+        if (searchVisible) {
+            overlayPadding += dp(74);
+        }
+
         rootScroll.setPadding(
                 rootScroll.getPaddingLeft(),
                 rootScroll.getPaddingTop(),
                 rootScroll.getPaddingRight(),
-                navigationInsetBottom + (navVisible ? dp(74) : 0));
+                overlayPadding);
         mainContent.setPadding(
                 mainContent.getPaddingLeft(),
                 mainContent.getPaddingTop(),
                 mainContent.getPaddingRight(),
-                navVisible ? dp(88) : dp(24));
+                dp(24));
     }
 
     private void setupFirebase() {
@@ -457,29 +494,13 @@ public class MainActivity extends AppCompatActivity {
         btnSearch.setOnClickListener(view -> startScanner());
     }
 
-    private void configureTextSearchAction(String description) {
+    private void configureTextSearchAction() {
         if (btnSearch == null) {
             return;
         }
-        btnSearch.setVisibility(View.VISIBLE);
-        btnSearch.setImageResource(R.drawable.ic_search);
-        btnSearch.setColorFilter(getColor(R.color.one_ui_text_secondary));
-        btnSearch.setContentDescription(description);
-        btnSearch.setOnClickListener(view -> {
-            hideKeyboard();
-            if (activeTab == TAB_RECALLS) {
-                renderRecallItems();
-            } else if (activeTab == TAB_LISTS && !TextUtils.isEmpty(currentListKey)) {
-                renderLocalList(
-                        currentListTitle,
-                        currentListSectionTitle,
-                        currentListKey,
-                        currentListEmptyMessage,
-                        readLocalItems(currentListKey));
-            } else if (activeTab == TAB_SEARCH) {
-                renderSearchRecentItems();
-            }
-        });
+        btnSearch.setVisibility(View.GONE);
+        btnSearch.setContentDescription(null);
+        btnSearch.setOnClickListener(null);
     }
 
     private void openProductDetails(String code, int returnTab, ProductInfo savedProduct) {
@@ -1261,7 +1282,7 @@ public class MainActivity extends AppCompatActivity {
         setProfileButtonVisible(false);
         txtTitle.setText("Detalhes do produto");
         txtTitle.setTextSize(24);
-        searchContainer.setVisibility(View.GONE);
+        setSearchVisible(false);
         filtersScroll.setVisibility(View.GONE);
         sectionHeader.setVisibility(View.GONE);
         btnSort.setVisibility(View.GONE);
@@ -1325,34 +1346,51 @@ public class MainActivity extends AppCompatActivity {
         imgProduct.setContentDescription(getString(R.string.product_image));
         imgProduct.setImageResource(R.drawable.ic_scan);
         imgProduct.setColorFilter(getColor(R.color.one_ui_text_muted));
-        imgProduct.setPadding(dp(24), dp(24), dp(24), dp(24));
+        imgProduct.setPadding(dp(22), dp(22), dp(22), dp(22));
         imgProduct.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
-        FrameLayout.LayoutParams imageParams = new FrameLayout.LayoutParams(dp(88), dp(88));
+        FrameLayout.LayoutParams imageParams = new FrameLayout.LayoutParams(dp(78), dp(78));
         imageParams.gravity = android.view.Gravity.START | android.view.Gravity.TOP;
         imageStack.addView(imgProduct, imageParams);
 
         txtScore = new TextView(this);
         txtScore.setGravity(android.view.Gravity.CENTER);
         txtScore.setTextColor(getColor(android.R.color.white));
-        txtScore.setTextSize(13);
+        txtScore.setTextSize(12);
         txtScore.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
         txtScore.setBackgroundResource(R.drawable.bg_score_circle);
-        FrameLayout.LayoutParams scoreParams = new FrameLayout.LayoutParams(dp(42), dp(42));
+        FrameLayout.LayoutParams scoreParams = new FrameLayout.LayoutParams(dp(36), dp(36));
         scoreParams.gravity = android.view.Gravity.TOP | android.view.Gravity.END;
         imageStack.addView(txtScore, scoreParams);
-        hero.addView(imageStack, new LinearLayout.LayoutParams(dp(102), dp(94)));
+        hero.addView(imageStack, new LinearLayout.LayoutParams(dp(90), dp(82)));
 
         LinearLayout identity = new LinearLayout(this);
         identity.setOrientation(LinearLayout.VERTICAL);
-        identity.setPadding(dp(12), 0, 0, 0);
+        identity.setPadding(dp(10), 0, 0, 0);
+
+        LinearLayout titleRow = new LinearLayout(this);
+        titleRow.setOrientation(LinearLayout.HORIZONTAL);
+        titleRow.setGravity(android.view.Gravity.CENTER_VERTICAL);
 
         txtProductName = new TextView(this);
         txtProductName.setText(firstNonEmpty(product.name, "Produto sem nome informado"));
         txtProductName.setTextColor(getColor(R.color.one_ui_text_primary));
-        txtProductName.setTextSize(18);
+        txtProductName.setTextSize(17);
         txtProductName.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
-        txtProductName.setMaxLines(3);
-        identity.addView(txtProductName);
+        txtProductName.setMaxLines(2);
+        titleRow.addView(txtProductName, new LinearLayout.LayoutParams(
+                0,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                1));
+
+        btnSaveProduct = new ImageButton(this);
+        btnSaveProduct.setScaleType(ImageView.ScaleType.CENTER);
+        btnSaveProduct.setBackgroundResource(R.drawable.bg_icon_action);
+        btnSaveProduct.setPadding(dp(9), dp(9), dp(9), dp(9));
+        btnSaveProduct.setOnClickListener(view -> saveCurrentProduct());
+        LinearLayout.LayoutParams saveParams = new LinearLayout.LayoutParams(dp(40), dp(40));
+        saveParams.setMargins(dp(8), 0, 0, 0);
+        titleRow.addView(btnSaveProduct, saveParams);
+        identity.addView(titleRow);
 
         txtBrand = new TextView(this);
         txtBrand.setText(firstNonEmpty(product.brand, "Marca não informada"));
@@ -1396,12 +1434,14 @@ public class MainActivity extends AppCompatActivity {
                 : product.score.hasScore
                 ? scoreColorRes(product.score.value)
                 : R.color.one_ui_text_secondary));
-        txtClassification.setTextSize(15);
+        txtClassification.setTextSize(14);
         txtClassification.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        txtClassification.setSingleLine(false);
+        txtClassification.setMaxLines(2);
         LinearLayout.LayoutParams classificationParams = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT);
-        classificationParams.setMargins(0, dp(6), 0, 0);
+        classificationParams.setMargins(0, dp(2), 0, dp(4));
         dynamicContent.addView(txtClassification, classificationParams);
 
         if (product.score.hasScore) {
@@ -1412,33 +1452,10 @@ public class MainActivity extends AppCompatActivity {
             updateScoreColor(0);
         }
 
-        btnSaveProduct = new Button(this);
-        btnSaveProduct.setAllCaps(false);
-        btnSaveProduct.setTextSize(14);
-        btnSaveProduct.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
-        btnSaveProduct.setBackgroundResource(R.drawable.bg_button_secondary);
-        btnSaveProduct.setCompoundDrawablePadding(dp(8));
-        btnSaveProduct.setOnClickListener(view -> saveCurrentProduct());
-        LinearLayout.LayoutParams actionParams = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                dp(48));
-        actionParams.setMargins(0, dp(10), 0, dp(6));
-        dynamicContent.addView(btnSaveProduct, actionParams);
         updateSaveButtonState();
 
+        addAssessmentOverview(product);
         addProductRecallAlertSection(product);
-
-        LinearLayout assessment = createDetailSection("Avaliação");
-        txtExplanation = addDetailParagraph(
-                assessment,
-                "Como chegamos à nota",
-                product.score.hasScore
-                        ? product.score.explanation
-                        : product.mineralWater
-                        ? "Água mineral nem sempre traz Nutri-Score ou tabela nutricional completa nas bases consultadas. Neste caso, confira os dados da água e da garrafa abaixo, como volume, origem, embalagem e minerais disponíveis."
-                        : "O Open Food Facts não trouxe Nutri-Score nem dados nutricionais suficientes para estimar uma nota com segurança.",
-                R.color.one_ui_text_secondary);
-        addDetailSection(assessment);
 
         addMineralWaterSection(product);
 
@@ -1526,6 +1543,278 @@ public class MainActivity extends AppCompatActivity {
         addOptionalDetailRow(alert, "Fonte", firstNonEmpty(product.recallAlertSource, SOURCE_ANVISA));
         addRecallNoticeLink(alert, product.recallAlertTitle, product.recallAlertUrl);
         addDetailSection(alert);
+    }
+
+    private void addAssessmentOverview(ProductInfo product) {
+        addProcessingAssessmentCard(product);
+        addNutrientAssessmentCard(product);
+        addAdditiveAssessmentCard(product);
+    }
+
+    private void addProcessingAssessmentCard(ProductInfo product) {
+        LinearLayout card = createAssessmentCard("PROCESSAMENTO");
+        int score = processingScore(product.novaGroup);
+        addAssessmentBar(card, score, "Mais processado", "Menos processado");
+
+        if (product.novaGroup > 0) {
+            addAssessmentRow(
+                    card,
+                    novaDescription(product.novaGroup),
+                    product.novaGroup <= 2 ? R.color.one_ui_good
+                            : product.novaGroup == 3 ? R.color.one_ui_warning : R.color.one_ui_danger,
+                    false);
+        } else {
+            addAssessmentRow(card, "Processamento não informado na base", R.color.one_ui_warning, false);
+        }
+        addDetailSection(card);
+    }
+
+    private void addNutrientAssessmentCard(ProductInfo product) {
+        LinearLayout card = createAssessmentCard("NUTRIENTES");
+        addAssessmentBar(card, nutrientBalanceScore(product), "Menos equilibrado", "Mais equilibrado");
+
+        int rows = 0;
+        rows += addSugarAssessmentRow(card, product.sugars, false);
+        rows += addSaltAssessmentRow(card, product, false);
+        rows += addSaturatedFatAssessmentRow(card, product.saturatedFat, false);
+        if (rows < 3) {
+            rows += addPositiveNutrientAssessmentRow(card, "Fibras", product.fiber, 3, 6, false);
+        }
+        if (rows < 3) {
+            rows += addPositiveNutrientAssessmentRow(card, "Proteínas", product.proteins, 6, 10, false);
+        }
+
+        if (rows == 0) {
+            addAssessmentRow(card, "Dados nutricionais insuficientes na base", R.color.one_ui_warning, false);
+        }
+        addDetailSection(card);
+    }
+
+    private void addAdditiveAssessmentCard(ProductInfo product) {
+        LinearLayout card = createAssessmentCard("ADITIVOS");
+        int additiveCount = countDisplayItems(product.additives);
+        int score = additiveCount == 0 ? 70 : clamp(95 - (additiveCount * 18), 15, 85);
+        addAssessmentBar(card, score, "Mais aditivos", "Menos aditivos");
+
+        if (additiveCount == 0) {
+            addAssessmentRow(card, "Sem aditivos listados na base", R.color.one_ui_good, false);
+        } else {
+            addAssessmentRow(
+                    card,
+                    additiveCount == 1 ? "Contém 1 aditivo listado" : "Contém " + additiveCount + " aditivos listados",
+                    additiveCount <= 1 ? R.color.one_ui_warning : R.color.one_ui_danger,
+                    false);
+        }
+        addDetailSection(card);
+    }
+
+    private LinearLayout createAssessmentCard(String titleText) {
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setBackgroundResource(R.drawable.bg_card);
+        card.setPadding(dp(14), dp(10), dp(14), dp(10));
+
+        TextView title = new TextView(this);
+        title.setText(titleText);
+        title.setTextColor(getColor(R.color.one_ui_text_primary));
+        title.setTextSize(13);
+        title.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        card.addView(title);
+        return card;
+    }
+
+    private void addAssessmentBar(LinearLayout card, int score, String leftLabel, String rightLabel) {
+        AssessmentBarView bar = new AssessmentBarView(
+                this,
+                clamp(score, 0, 100),
+                getColor(R.color.one_ui_danger),
+                getColor(R.color.one_ui_warning),
+                getColor(R.color.one_ui_good),
+                getColor(R.color.one_ui_surface),
+                getColor(R.color.one_ui_text_secondary));
+        LinearLayout.LayoutParams barParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                dp(20));
+        barParams.setMargins(0, dp(6), 0, 0);
+        card.addView(bar, barParams);
+
+        LinearLayout labels = new LinearLayout(this);
+        labels.setOrientation(LinearLayout.HORIZONTAL);
+        labels.setGravity(android.view.Gravity.CENTER_VERTICAL);
+
+        TextView left = assessmentScaleLabel(leftLabel, android.view.Gravity.START);
+        TextView right = assessmentScaleLabel(rightLabel, android.view.Gravity.END);
+        labels.addView(left, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        labels.addView(right, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+
+        LinearLayout.LayoutParams labelParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        labelParams.setMargins(0, 0, 0, dp(4));
+        card.addView(labels, labelParams);
+    }
+
+    private TextView assessmentScaleLabel(String text, int gravity) {
+        TextView label = new TextView(this);
+        label.setText(text);
+        label.setTextColor(getColor(R.color.one_ui_text_muted));
+        label.setTextSize(11);
+        label.setGravity(gravity);
+        return label;
+    }
+
+    private void addAssessmentRow(LinearLayout card, String labelText, int colorRes, boolean divider) {
+        if (divider) {
+            View line = new View(this);
+            line.setBackgroundColor(getColor(R.color.one_ui_stroke_soft));
+            LinearLayout.LayoutParams lineParams = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    Math.max(1, dp(1)));
+            lineParams.setMargins(0, dp(3), 0, dp(3));
+            card.addView(line, lineParams);
+        }
+
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        row.setPadding(0, dp(2), 0, dp(2));
+
+        TextView label = new TextView(this);
+        label.setText(labelText);
+        label.setTextColor(getColor(R.color.one_ui_text_primary));
+        label.setTextSize(12);
+        row.addView(label, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+
+        View dot = new View(this);
+        dot.setBackground(roundedDrawable(getColor(colorRes), dp(5)));
+        LinearLayout.LayoutParams dotParams = new LinearLayout.LayoutParams(dp(10), dp(10));
+        dotParams.setMargins(dp(12), 0, 0, 0);
+        row.addView(dot, dotParams);
+        card.addView(row);
+    }
+
+    private int addSugarAssessmentRow(LinearLayout card, double sugars, boolean divider) {
+        if (sugars < 0) {
+            return 0;
+        }
+        if (sugars <= 5) {
+            addAssessmentRow(card, "Baixo em açúcares", R.color.one_ui_good, divider);
+        } else if (sugars <= 22.5) {
+            addAssessmentRow(card, "Médio em açúcares", R.color.one_ui_warning, divider);
+        } else {
+            addAssessmentRow(card, "Alto em açúcares", R.color.one_ui_danger, divider);
+        }
+        return 1;
+    }
+
+    private int addSaltAssessmentRow(LinearLayout card, ProductInfo product, boolean divider) {
+        double salt = product.salt >= 0 ? product.salt : product.sodium >= 0 ? product.sodium * 2.5 : -1;
+        if (salt < 0) {
+            return 0;
+        }
+        if (salt <= 0.3) {
+            addAssessmentRow(card, "Baixo em sódio", R.color.one_ui_good, divider);
+        } else if (salt <= 1.5) {
+            addAssessmentRow(card, "Médio em sódio", R.color.one_ui_warning, divider);
+        } else {
+            addAssessmentRow(card, "Alto em sódio", R.color.one_ui_danger, divider);
+        }
+        return 1;
+    }
+
+    private int addSaturatedFatAssessmentRow(LinearLayout card, double saturatedFat, boolean divider) {
+        if (saturatedFat < 0) {
+            return 0;
+        }
+        if (saturatedFat <= 2) {
+            addAssessmentRow(card, "Baixo em gorduras saturadas", R.color.one_ui_good, divider);
+        } else if (saturatedFat <= 5) {
+            addAssessmentRow(card, "Médio em gorduras saturadas", R.color.one_ui_warning, divider);
+        } else {
+            addAssessmentRow(card, "Alto em gorduras saturadas", R.color.one_ui_danger, divider);
+        }
+        return 1;
+    }
+
+    private int addPositiveNutrientAssessmentRow(
+            LinearLayout card,
+            String nutrient,
+            double value,
+            double goodThreshold,
+            double highThreshold,
+            boolean divider) {
+        if (value < 0) {
+            return 0;
+        }
+        if (value >= highThreshold) {
+            addAssessmentRow(card, "Boa quantidade de " + nutrient.toLowerCase(Locale.ROOT), R.color.one_ui_good, divider);
+        } else if (value >= goodThreshold) {
+            addAssessmentRow(card, "Quantidade moderada de " + nutrient.toLowerCase(Locale.ROOT), R.color.one_ui_warning, divider);
+        } else {
+            addAssessmentRow(card, "Pouca quantidade de " + nutrient.toLowerCase(Locale.ROOT), R.color.one_ui_text_muted, divider);
+        }
+        return 1;
+    }
+
+    private int processingScore(int novaGroup) {
+        switch (novaGroup) {
+            case 1:
+                return 92;
+            case 2:
+                return 72;
+            case 3:
+                return 45;
+            case 4:
+                return 18;
+            default:
+                return 50;
+        }
+    }
+
+    private int nutrientBalanceScore(ProductInfo product) {
+        if (product.score != null && product.score.hasScore) {
+            return product.score.value;
+        }
+        if (!hasNutritionData(product)) {
+            return 50;
+        }
+        int score = 100;
+        if (product.sugars > 22.5) {
+            score -= 24;
+        } else if (product.sugars > 5) {
+            score -= 10;
+        }
+        double salt = product.salt >= 0 ? product.salt : product.sodium >= 0 ? product.sodium * 2.5 : -1;
+        if (salt > 1.5) {
+            score -= 20;
+        } else if (salt > 0.3) {
+            score -= 8;
+        }
+        if (product.saturatedFat > 5) {
+            score -= 18;
+        } else if (product.saturatedFat > 2) {
+            score -= 8;
+        }
+        if (product.fiber >= 3) {
+            score += 6;
+        }
+        if (product.proteins >= 6) {
+            score += 4;
+        }
+        return clamp(score, 0, 100);
+    }
+
+    private int countDisplayItems(String value) {
+        if (TextUtils.isEmpty(value)) {
+            return 0;
+        }
+        int count = 0;
+        for (String item : value.split(",")) {
+            if (!TextUtils.isEmpty(item.trim())) {
+                count++;
+            }
+        }
+        return count;
     }
 
     private void addMineralWaterSection(ProductInfo product) {
@@ -1856,10 +2145,11 @@ public class MainActivity extends AppCompatActivity {
         btnBack.setVisibility(View.GONE);
         setProfileButtonVisible(true);
         sectionHeader.setVisibility(View.VISIBLE);
-        txtTitle.setText("Busca");
-        txtTitle.setTextSize(30);
-        searchContainer.setVisibility(View.VISIBLE);
-        configureSearchInput("Buscar nos recentes", searchQuery);
+        configureSectionHeaderStyle(false);
+        txtTitle.setText("Pesquisar");
+        txtTitle.setTextSize(26);
+        setSearchVisible(true);
+        configureSearchInput("Pesquisar", searchQuery);
         configureProductSearchAction();
         filtersScroll.setVisibility(View.GONE);
         btnSort.setVisibility(View.INVISIBLE);
@@ -1890,12 +2180,14 @@ public class MainActivity extends AppCompatActivity {
             return;
         }
         int limit = filtering ? visibleItems.length() : Math.min(visibleItems.length(), 6);
+        LinearLayout group = createProductListGroup();
         for (int index = 0; index < limit; index++) {
             JSONObject item = visibleItems.optJSONObject(index);
             if (item != null) {
-                addHistoryRow(item);
+                addCompactProductRow(group, item, TAB_SEARCH, false, group.getChildCount() > 0);
             }
         }
+        addProductListGroup(group);
     }
 
     private String normalizeSearchText(String value) {
@@ -1942,14 +2234,15 @@ public class MainActivity extends AppCompatActivity {
         btnBack.setVisibility(View.GONE);
         setProfileButtonVisible(true);
         sectionHeader.setVisibility(View.VISIBLE);
+        configureSectionHeaderStyle(true);
         txtTitle.setText("Alertas no Brasil");
-        txtTitle.setTextSize(30);
-        searchContainer.setVisibility(View.VISIBLE);
-        configureSearchInput("Buscar nos alertas", recallQuery);
-        configureTextSearchAction("Buscar alertas");
+        txtTitle.setTextSize(26);
+        setSearchVisible(true);
+        configureSearchInput("Pesquisar", recallQuery);
+        configureTextSearchAction();
         filtersScroll.setVisibility(View.GONE);
         btnSort.setVisibility(View.VISIBLE);
-        btnSort.setContentDescription("Filtrar ano do recall");
+        btnSort.setContentDescription("Filtrar alertas");
         cardStatus.setVisibility(View.GONE);
         cardResult.setVisibility(View.GONE);
         txtFooter.setVisibility(View.VISIBLE);
@@ -1971,6 +2264,7 @@ public class MainActivity extends AppCompatActivity {
             recallItems = new JSONArray();
             recallOffset = 0;
             recallTotal = -1;
+            recallLoadedPages = 0;
             loadedRecallYear = selectedRecallYear;
         }
 
@@ -2000,6 +2294,10 @@ public class MainActivity extends AppCompatActivity {
                 appendRecallItems(result.items);
                 recallTotal = result.total < 0 ? -1 : recallItems.length();
                 recallOffset += RECALL_PAGE_SIZE;
+                recallLoadedPages++;
+                if (result.total < 0 && recallLoadedPages < MAX_RECALL_AUTO_PAGES) {
+                    loadRecalls(false);
+                }
                 renderRecallItems();
             });
         });
@@ -2008,10 +2306,12 @@ public class MainActivity extends AppCompatActivity {
     private RecallResult fetchRecallItems(int year, int offset) {
         HttpURLConnection connection = null;
         try {
-            URL url = new URL(ANVISA_NEWS_URL + year + "?b_start:int=" + offset);
+            URL url = new URL(ANVISA_NEWS_URL + year
+                    + "?b_start:int=" + offset
+                    + "&b_size:int=" + RECALL_PAGE_SIZE);
             connection = (HttpURLConnection) url.openConnection();
             connection.setConnectTimeout(12000);
-            connection.setReadTimeout(12000);
+            connection.setReadTimeout(20000);
             connection.setRequestProperty("User-Agent", USER_AGENT);
 
             int responseCode = connection.getResponseCode();
@@ -2082,7 +2382,9 @@ public class MainActivity extends AppCompatActivity {
 
         int currentYear = Calendar.getInstance().get(Calendar.YEAR);
         for (int year = currentYear; year >= Math.max(FIRST_RECALL_YEAR, currentYear - 1); year--) {
-            for (int offset = 0; offset < RECALL_PAGE_SIZE * 4; offset += RECALL_PAGE_SIZE) {
+            for (int offset = 0;
+                 offset < PRODUCT_RECALL_PAGE_SIZE * 4;
+                 offset += PRODUCT_RECALL_PAGE_SIZE) {
                 String html = fetchAnvisaNewsPage(year, offset);
                 if (TextUtils.isEmpty(html)) {
                     continue;
@@ -2100,7 +2402,7 @@ public class MainActivity extends AppCompatActivity {
                     }
                 }
 
-                if (!html.contains("b_start:int=" + (offset + RECALL_PAGE_SIZE))) {
+                if (!html.contains("b_start:int=" + (offset + PRODUCT_RECALL_PAGE_SIZE))) {
                     break;
                 }
             }
@@ -2445,37 +2747,65 @@ public class MainActivity extends AppCompatActivity {
         return false;
     }
 
+    private void configureSectionHeaderStyle(boolean compactRecallHeader) {
+        txtSectionTitle.setTextSize(compactRecallHeader ? 11 : 15);
+        txtSectionTitle.setTextColor(getColor(
+                compactRecallHeader ? R.color.one_ui_text_secondary : R.color.one_ui_text_primary));
+        txtSectionTitle.setTypeface(compactRecallHeader
+                ? android.graphics.Typeface.DEFAULT
+                : android.graphics.Typeface.DEFAULT_BOLD);
+        txtSectionMeta.setVisibility(compactRecallHeader ? View.GONE : View.VISIBLE);
+    }
+
     private void renderRecallItems() {
-        boolean filtering = !TextUtils.isEmpty(normalizeSearchText(recallQuery));
-        txtSectionTitle.setText(filtering ? "Resultados" : "Notificações");
-        txtSectionMeta.setText(recallMetaText());
         dynamicContent.removeAllViews();
 
         if (loadingRecalls && recallItems.length() == 0) {
+            txtSectionTitle.setText(selectedRecallYear + " · Carregando...");
             addInfoCard("Carregando", "Buscando recolhimentos de " + selectedRecallYear + "...");
             return;
         }
 
         JSONArray visibleItems = filterRecallItems(recallItems, normalizeSearchText(recallQuery));
+        txtSectionTitle.setText(recallHeaderText(visibleItems.length()));
         if (visibleItems.length() == 0) {
             if (recallItems.length() == 0) {
                 addInfoCard("Nenhum alerta encontrado", "Não encontrei notícias de recolhimento, proibição ou suspensão de produtos para " + selectedRecallYear + " nessa fonte.");
             } else {
-                addInfoCard("Nenhum resultado", "Nenhum recolhimento carregado corresponde ao texto digitado.");
+                addInfoCard("Sem correspondências", "Ajuste a pesquisa ou os filtros para encontrar outros alertas.");
             }
             addLoadMoreRecallButtonIfNeeded();
             addRecallSourceFootnote();
             return;
         }
 
+        LinearLayout group = createProductListGroup();
         for (int index = 0; index < visibleItems.length(); index++) {
             JSONObject item = visibleItems.optJSONObject(index);
             if (item != null) {
-                addRecallRow(item);
+                addRecallRow(group, item, group.getChildCount() > 0);
             }
         }
+        addProductListGroup(group);
         addLoadMoreRecallButtonIfNeeded();
         addRecallSourceFootnote();
+    }
+
+    private String recallHeaderText(int visibleCount) {
+        ArrayList<String> parts = new ArrayList<>();
+        parts.add(String.valueOf(selectedRecallYear));
+        if (selectedRecallMonth > 0) {
+            parts.add(recallMonthLabel(selectedRecallMonth));
+        }
+        if (selectedRecallStatus > 0) {
+            parts.add(recallStatusLabel(selectedRecallStatus));
+        }
+        boolean filtering = hasRecallFilters() || !TextUtils.isEmpty(normalizeSearchText(recallQuery));
+        String count = filtering
+                ? visibleCount + " de " + recallItems.length()
+                : recallItems.length() + (recallItems.length() == 1 ? " alerta" : " alertas");
+        parts.add(count + (loadingRecalls ? "..." : ""));
+        return TextUtils.join(" · ", parts);
     }
 
     private JSONArray filterRecallItems(JSONArray items, String normalizedQuery) {
@@ -2491,44 +2821,145 @@ public class MainActivity extends AppCompatActivity {
                             + " " + item.optString("title")
                             + " " + item.optString("summary")
                             + " " + item.optString("source"));
-            if (TextUtils.isEmpty(normalizedQuery) || searchableText.contains(normalizedQuery)) {
-                filtered.put(item);
+            if (!TextUtils.isEmpty(normalizedQuery) && !searchableText.contains(normalizedQuery)) {
+                continue;
+            }
+            if (!matchesRecallMonth(item.optString("date"))
+                    || !matchesRecallStatus(item.optString("type"))) {
+                continue;
+            }
+            filtered.put(item);
+        }
+        ArrayList<JSONObject> orderedItems = new ArrayList<>();
+        for (int index = 0; index < filtered.length(); index++) {
+            JSONObject item = filtered.optJSONObject(index);
+            if (item != null) {
+                orderedItems.add(item);
             }
         }
-        return filtered;
+
+        java.util.Collections.sort(orderedItems, (left, right) -> {
+            long leftDate = recallDateSortValue(left.optString("date"));
+            long rightDate = recallDateSortValue(right.optString("date"));
+            if (leftDate == 0) {
+                return rightDate == 0 ? 0 : 1;
+            }
+            if (rightDate == 0) {
+                return -1;
+            }
+            return recallNewestFirst
+                    ? Long.compare(rightDate, leftDate)
+                    : Long.compare(leftDate, rightDate);
+        });
+
+        JSONArray ordered = new JSONArray();
+        for (JSONObject item : orderedItems) {
+            ordered.put(item);
+        }
+        return ordered;
     }
 
-    private void addRecallRow(JSONObject item) {
+    private long recallDateSortValue(String date) {
+        if (TextUtils.isEmpty(date) || date.length() < 10) {
+            return 0;
+        }
+        try {
+            int day = Integer.parseInt(date.substring(0, 2));
+            int month = Integer.parseInt(date.substring(3, 5));
+            int year = Integer.parseInt(date.substring(6, 10));
+            int hour = date.length() >= 13 ? Integer.parseInt(date.substring(11, 13)) : 0;
+            int minute = date.length() >= 16 ? Integer.parseInt(date.substring(14, 16)) : 0;
+            return (((((long) year * 100) + month) * 100 + day) * 100 + hour) * 100 + minute;
+        } catch (NumberFormatException exception) {
+            return 0;
+        }
+    }
+
+    private boolean hasRecallFilters() {
+        return selectedRecallMonth > 0 || selectedRecallStatus > 0;
+    }
+
+    private boolean matchesRecallMonth(String date) {
+        if (selectedRecallMonth == 0) {
+            return true;
+        }
+        if (TextUtils.isEmpty(date) || date.length() < 5) {
+            return false;
+        }
+        try {
+            return Integer.parseInt(date.substring(3, 5)) == selectedRecallMonth;
+        } catch (NumberFormatException exception) {
+            return false;
+        }
+    }
+
+    private boolean matchesRecallStatus(String type) {
+        if (selectedRecallStatus == 0) {
+            return true;
+        }
+        String normalized = normalizeSearchText(type);
+        switch (selectedRecallStatus) {
+            case 1:
+                return normalized.contains("recolh");
+            case 2:
+                return normalized.contains("proib");
+            case 3:
+                return normalized.contains("suspens");
+            case 4:
+                return normalized.contains("contamin");
+            case 5:
+                return normalized.contains("irregular");
+            case 6:
+                return normalized.contains("apreens");
+            case 7:
+                return normalized.contains("interdit");
+            default:
+                return true;
+        }
+    }
+
+    private void addRecallRow(LinearLayout group, JSONObject item, boolean showDivider) {
+        if (showDivider) {
+            View divider = new View(this);
+            divider.setBackgroundColor(getColor(R.color.one_ui_stroke_soft));
+            LinearLayout.LayoutParams dividerParams = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    Math.max(1, dp(1)));
+            dividerParams.setMargins(dp(12), 0, dp(12), 0);
+            group.addView(divider, dividerParams);
+        }
+
         LinearLayout row = new LinearLayout(this);
-        row.setOrientation(LinearLayout.HORIZONTAL);
-        row.setGravity(android.view.Gravity.TOP);
+        row.setOrientation(LinearLayout.VERTICAL);
         row.setBackgroundResource(R.drawable.bg_result_row);
-        row.setPadding(dp(8), dp(8), dp(10), dp(8));
+        row.setPadding(dp(12), dp(9), dp(12), dp(9));
 
-        LinearLayout mediaColumn = new LinearLayout(this);
-        mediaColumn.setOrientation(LinearLayout.VERTICAL);
-        mediaColumn.setGravity(android.view.Gravity.TOP | android.view.Gravity.CENTER_HORIZONTAL);
-
-        ImageView image = new ImageView(this);
-        image.setBackgroundResource(R.drawable.bg_product_image);
-        image.setContentDescription("Alerta de " + firstNonEmpty(item.optString("type"), "produto").toLowerCase(Locale.ROOT));
-        image.setImageResource(R.drawable.ic_recall);
-        image.setColorFilter(getColor(R.color.one_ui_warning));
-        image.setPadding(dp(16), dp(16), dp(16), dp(16));
-        image.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
-        LinearLayout.LayoutParams imageParams = new LinearLayout.LayoutParams(dp(72), dp(72));
-        mediaColumn.addView(image, imageParams);
+        LinearLayout header = new LinearLayout(this);
+        header.setOrientation(LinearLayout.HORIZONTAL);
+        header.setGravity(android.view.Gravity.CENTER_VERTICAL);
 
         TextView typeChip = createRecallTypeChip(item.optString("type"));
         LinearLayout.LayoutParams chipParams = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT);
-        chipParams.setMargins(0, dp(6), 0, 0);
-        mediaColumn.addView(typeChip, chipParams);
+        header.addView(typeChip, chipParams);
 
-        LinearLayout.LayoutParams mediaParams = new LinearLayout.LayoutParams(dp(78), ViewGroup.LayoutParams.WRAP_CONTENT);
-        mediaParams.setMargins(0, 0, dp(10), 0);
-        row.addView(mediaColumn, mediaParams);
+        TextView meta = new TextView(this);
+        meta.setText(firstNonEmpty(item.optString("source"), SOURCE_ANVISA)
+                + " · " + firstNonEmpty(item.optString("date"), "data não informada"));
+        meta.setTextColor(getColor(R.color.one_ui_text_secondary));
+        meta.setTextSize(12);
+        meta.setMaxLines(1);
+        LinearLayout.LayoutParams metaParams = new LinearLayout.LayoutParams(
+                0,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                1);
+        metaParams.setMargins(dp(8), 0, 0, 0);
+        header.addView(meta, metaParams);
+
+        row.addView(header, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
 
         LinearLayout texts = new LinearLayout(this);
         texts.setOrientation(LinearLayout.VERTICAL);
@@ -2536,10 +2967,14 @@ public class MainActivity extends AppCompatActivity {
         TextView productName = new TextView(this);
         productName.setText(firstNonEmpty(item.optString("productName"), item.optString("title"), "Produto em alerta"));
         productName.setTextColor(getColor(R.color.one_ui_text_primary));
-        productName.setTextSize(15);
+        productName.setTextSize(14);
         productName.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
         productName.setMaxLines(2);
-        texts.addView(productName);
+        LinearLayout.LayoutParams productNameParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        productNameParams.setMargins(0, dp(5), 0, 0);
+        texts.addView(productName, productNameParams);
 
         TextView title = new TextView(this);
         String titleText = firstNonEmpty(item.optString("title"), "Notificação sem título");
@@ -2547,7 +2982,7 @@ public class MainActivity extends AppCompatActivity {
         title.setText(titleText);
         title.setTextColor(getColor(TextUtils.isEmpty(url) ? R.color.one_ui_text_secondary : R.color.one_ui_accent));
         title.setTextSize(12);
-        title.setMaxLines(3);
+        title.setMaxLines(2);
         title.setPaintFlags(title.getPaintFlags() | android.graphics.Paint.UNDERLINE_TEXT_FLAG);
         if (!TextUtils.isEmpty(url)) {
             title.setClickable(true);
@@ -2561,27 +2996,14 @@ public class MainActivity extends AppCompatActivity {
         titleParams.setMargins(0, dp(3), 0, 0);
         texts.addView(title, titleParams);
 
-        TextView meta = new TextView(this);
-        meta.setText(firstNonEmpty(item.optString("source"), SOURCE_ANVISA)
-                + " · " + firstNonEmpty(item.optString("date"), "data não informada"));
-        meta.setTextColor(getColor(R.color.one_ui_text_secondary));
-        meta.setTextSize(12);
-        meta.setMaxLines(2);
-        LinearLayout.LayoutParams metaParams = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT);
-        metaParams.setMargins(0, dp(4), 0, 0);
-        texts.addView(meta, metaParams);
-
         addOptionalRecallText(texts, "Resumo", item.optString("summary"), R.color.one_ui_text_secondary);
-        row.addView(texts, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
-
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+        row.addView(texts, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT);
-        params.setMargins(0, 0, 0, dp(8));
-        dynamicContent.addView(row, params);
-        loadAnvisaRecallImage(image, item);
+                ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        group.addView(row, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
     }
 
     private TextView createRecallTypeChip(String type) {
@@ -2590,7 +3012,7 @@ public class MainActivity extends AppCompatActivity {
         chip.setText(label);
         chip.setGravity(android.view.Gravity.CENTER);
         chip.setTextColor(getColor(recallTypeColorRes(type)));
-        chip.setTextSize(recallTypeTextSize(label));
+        chip.setTextSize(15);
         chip.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
         chip.setMaxLines(2);
         chip.setIncludeFontPadding(false);
@@ -2631,23 +3053,6 @@ public class MainActivity extends AppCompatActivity {
         return firstNonEmpty(type, "Alerta");
     }
 
-    private int recallTypeTextSize(String label) {
-        String longestLine = "";
-        String[] lines = firstNonEmpty(label, "").split("\\n");
-        for (String line : lines) {
-            if (line.length() > longestLine.length()) {
-                longestLine = line;
-            }
-        }
-        if (longestLine.length() <= 8) {
-            return 10;
-        }
-        if (longestLine.length() <= 10) {
-            return 9;
-        }
-        return 8;
-    }
-
     private int recallTypeColorRes(String type) {
         String normalized = normalizeSearchText(type);
         if (normalized.contains("proib") || normalized.contains("apreens") || normalized.contains("interdit")) {
@@ -2668,6 +3073,7 @@ public class MainActivity extends AppCompatActivity {
         text.setTextColor(getColor(colorRes));
         text.setTextSize(12);
         text.setLineSpacing(dp(2), 1f);
+        text.setMaxLines(2);
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT);
@@ -2708,96 +3114,6 @@ public class MainActivity extends AppCompatActivity {
         } catch (Exception exception) {
             showMessage("Não consegui abrir a notificação completa agora.");
         }
-    }
-
-    private void loadAnvisaRecallImage(ImageView image, JSONObject item) {
-        String pageUrl = item.optString("url");
-        if (TextUtils.isEmpty(pageUrl)) {
-            return;
-        }
-
-        String cachedUrl = anvisaImageUrlCache.get(pageUrl);
-        if (cachedUrl != null) {
-            if (!TextUtils.isEmpty(cachedUrl)) {
-                loadImageIntoView(image, pageUrl, cachedUrl);
-            }
-            return;
-        }
-
-        image.setTag(pageUrl);
-        executor.execute(() -> {
-            String imageUrl = fetchAnvisaNewsImageUrl(pageUrl);
-            anvisaImageUrlCache.put(pageUrl, firstNonEmpty(imageUrl, ""));
-            if (!TextUtils.isEmpty(imageUrl)) {
-                mainHandler.post(() -> loadImageIntoView(image, pageUrl, imageUrl));
-            }
-        });
-    }
-
-    private String fetchAnvisaNewsImageUrl(String pageUrl) {
-        HttpURLConnection connection = null;
-        try {
-            URL url = new URL(pageUrl);
-            connection = (HttpURLConnection) url.openConnection();
-            connection.setConnectTimeout(12000);
-            connection.setReadTimeout(12000);
-            connection.setRequestProperty("User-Agent", USER_AGENT);
-            int responseCode = connection.getResponseCode();
-            if (responseCode < 200 || responseCode >= 300) {
-                return "";
-            }
-            String body = readText(connection.getInputStream());
-            Matcher pageImageMatcher = ANVISA_PAGE_IMAGE_PATTERN.matcher(body);
-            while (pageImageMatcher.find()) {
-                String imageUrl = resolveAnvisaImageUrl(pageUrl, cleanHtmlText(pageImageMatcher.group(1)));
-                if (isUsefulAnvisaImageUrl(imageUrl)) {
-                    return imageUrl;
-                }
-            }
-
-            Matcher imageMatcher = ANVISA_IMAGE_PATTERN.matcher(body);
-            while (imageMatcher.find()) {
-                String imageUrl = resolveAnvisaImageUrl(pageUrl, cleanHtmlText(imageMatcher.group(1)));
-                if (isUsefulAnvisaImageUrl(imageUrl)) {
-                    return imageUrl;
-                }
-            }
-            return "";
-        } catch (Exception exception) {
-            return "";
-        } finally {
-            if (connection != null) {
-                connection.disconnect();
-            }
-        }
-    }
-
-    private String resolveAnvisaImageUrl(String pageUrl, String imageUrl) {
-        if (TextUtils.isEmpty(imageUrl)) {
-            return "";
-        }
-        try {
-            return new URL(new URL(pageUrl), imageUrl).toString();
-        } catch (Exception exception) {
-            return imageUrl;
-        }
-    }
-
-    private boolean isUsefulAnvisaImageUrl(String imageUrl) {
-        if (TextUtils.isEmpty(imageUrl)) {
-            return false;
-        }
-        String normalized = imageUrl.toLowerCase(Locale.ROOT);
-        return (normalized.startsWith("http://") || normalized.startsWith("https://"))
-                && !normalized.endsWith("/logo.png")
-                && !normalized.contains("/logo.png")
-                && !normalized.contains("favicon")
-                && !normalized.contains("govbr")
-                && !normalized.contains("barra-brasil")
-                && !normalized.contains("avatar")
-                && !normalized.contains("placeholder")
-                && !normalized.contains("sprite")
-                && !normalized.endsWith(".svg");
     }
 
     private void loadImageIntoView(ImageView image, String key, String imageUrl) {
@@ -2848,14 +3164,6 @@ public class MainActivity extends AppCompatActivity {
         dynamicContent.addView(footnote, params);
     }
 
-    private String recallMetaText() {
-        String loadedText = recallItems.length() + (recallItems.length() == 1 ? " carregado" : " carregados");
-        if (recallTotal >= 0) {
-            loadedText += " de " + recallTotal;
-        }
-        return selectedRecallYear + " · " + loadedText;
-    }
-
     private String formatRecallDate(String value) {
         if (TextUtils.isEmpty(value) || value.length() != 8) {
             return "data não informada";
@@ -2863,18 +3171,116 @@ public class MainActivity extends AppCompatActivity {
         return value.substring(6, 8) + "/" + value.substring(4, 6) + "/" + value.substring(0, 4);
     }
 
-    private void showRecallYearMenu() {
+    private void showRecallFilterMenu() {
         PopupMenu menu = new PopupMenu(this, btnSort);
         int currentYear = Calendar.getInstance().get(Calendar.YEAR);
+
+        SubMenu yearMenu = menu.getMenu().addSubMenu("Ano: " + selectedRecallYear);
         for (int year = currentYear; year >= FIRST_RECALL_YEAR; year--) {
-            menu.getMenu().add(0, year, currentYear - year, year == selectedRecallYear ? year + " ✓" : String.valueOf(year));
+            yearMenu.add(
+                    RECALL_FILTER_GROUP_YEAR,
+                    year,
+                    currentYear - year,
+                    year == selectedRecallYear ? year + " ✓" : String.valueOf(year));
         }
+
+        SubMenu monthMenu = menu.getMenu().addSubMenu("Mês: " + recallMonthLabel(selectedRecallMonth));
+        monthMenu.add(RECALL_FILTER_GROUP_MONTH, 0, 0,
+                selectedRecallMonth == 0 ? "Todos ✓" : "Todos");
+        for (int month = 1; month <= 12; month++) {
+            String label = recallMonthLabel(month);
+            monthMenu.add(
+                    RECALL_FILTER_GROUP_MONTH,
+                    month,
+                    month,
+                    month == selectedRecallMonth ? label + " ✓" : label);
+        }
+
+        SubMenu statusMenu = menu.getMenu().addSubMenu("Status: " + recallStatusLabel(selectedRecallStatus));
+        for (int status = 0; status <= 7; status++) {
+            String label = recallStatusLabel(status);
+            statusMenu.add(
+                    RECALL_FILTER_GROUP_STATUS,
+                    status,
+                    status,
+                    status == selectedRecallStatus ? label + " ✓" : label);
+        }
+
+        SubMenu orderMenu = menu.getMenu().addSubMenu(
+                "Ordem: " + (recallNewestFirst ? "Mais recentes" : "Mais antigos"));
+        orderMenu.add(
+                RECALL_FILTER_GROUP_ORDER,
+                1,
+                0,
+                recallNewestFirst ? "Mais recentes ✓" : "Mais recentes");
+        orderMenu.add(
+                RECALL_FILTER_GROUP_ORDER,
+                2,
+                1,
+                recallNewestFirst ? "Mais antigos" : "Mais antigos ✓");
+
+        menu.getMenu().add(RECALL_FILTER_GROUP_ACTION, 1, 5, "Limpar filtros");
         menu.setOnMenuItemClickListener(item -> {
-            selectedRecallYear = item.getItemId();
-            loadRecalls(true);
+            int group = item.getGroupId();
+            if (group == RECALL_FILTER_GROUP_YEAR) {
+                int year = item.getItemId();
+                if (year != selectedRecallYear) {
+                    selectedRecallYear = year;
+                    loadRecalls(true);
+                }
+            } else if (group == RECALL_FILTER_GROUP_MONTH) {
+                selectedRecallMonth = item.getItemId();
+                renderRecallItems();
+            } else if (group == RECALL_FILTER_GROUP_STATUS) {
+                selectedRecallStatus = item.getItemId();
+                renderRecallItems();
+            } else if (group == RECALL_FILTER_GROUP_ORDER) {
+                recallNewestFirst = item.getItemId() == 1;
+                renderRecallItems();
+            } else if (group == RECALL_FILTER_GROUP_ACTION) {
+                boolean reloadYear = selectedRecallYear != currentYear;
+                selectedRecallYear = currentYear;
+                selectedRecallMonth = 0;
+                selectedRecallStatus = 0;
+                recallNewestFirst = true;
+                if (reloadYear) {
+                    loadRecalls(true);
+                } else {
+                    renderRecallItems();
+                }
+            }
             return true;
         });
         menu.show();
+    }
+
+    private String recallMonthLabel(int month) {
+        String[] labels = {
+                "Todos", "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
+                "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"
+        };
+        return month >= 0 && month < labels.length ? labels[month] : "Todos";
+    }
+
+    private String recallStatusLabel(int status) {
+        switch (status) {
+            case 1:
+                return "Recolhido";
+            case 2:
+                return "Proibido";
+            case 3:
+                return "Suspenso";
+            case 4:
+                return "Contaminado";
+            case 5:
+                return "Irregular";
+            case 6:
+                return "Apreendido";
+            case 7:
+                return "Interditado";
+            default:
+                return "Todos";
+        }
     }
 
     private void showProfile() {
@@ -2888,9 +3294,9 @@ public class MainActivity extends AppCompatActivity {
         btnBack.setVisibility(View.VISIBLE);
         setProfileButtonVisible(false);
         txtTitle.setText("Perfil");
-        txtTitle.setTextSize(30);
+        txtTitle.setTextSize(26);
         sectionHeader.setVisibility(View.GONE);
-        searchContainer.setVisibility(View.GONE);
+        setSearchVisible(false);
         filtersScroll.setVisibility(View.GONE);
         btnSort.setVisibility(View.GONE);
         cardStatus.setVisibility(View.GONE);
@@ -2921,7 +3327,7 @@ public class MainActivity extends AppCompatActivity {
         sectionHeader.setVisibility(View.GONE);
         txtTitle.setText("Configurações");
         txtTitle.setTextSize(30);
-        searchContainer.setVisibility(View.GONE);
+        setSearchVisible(false);
         filtersScroll.setVisibility(View.GONE);
         btnSort.setVisibility(View.GONE);
         cardStatus.setVisibility(View.GONE);
@@ -2948,11 +3354,12 @@ public class MainActivity extends AppCompatActivity {
         btnBack.setVisibility(View.GONE);
         setProfileButtonVisible(true);
         sectionHeader.setVisibility(View.VISIBLE);
+        configureSectionHeaderStyle(false);
         txtTitle.setText(title);
-        txtTitle.setTextSize(30);
-        searchContainer.setVisibility(View.VISIBLE);
-        configureSearchInput("Buscar na minha lista", listSearchQuery);
-        configureTextSearchAction("Buscar na minha lista");
+        txtTitle.setTextSize(26);
+        setSearchVisible(true);
+        configureSearchInput("Pesquisar", listSearchQuery);
+        configureTextSearchAction();
         filtersScroll.setVisibility(View.GONE);
         btnSort.setVisibility(View.VISIBLE);
         cardStatus.setVisibility(View.GONE);
@@ -3000,27 +3407,45 @@ public class MainActivity extends AppCompatActivity {
             }
             return;
         }
+        LinearLayout group = createProductListGroup();
         for (int index = 0; index < items.length(); index++) {
             JSONObject item = items.optJSONObject(index);
             if (item != null) {
                 if (KEY_HISTORY.equals(key)) {
-                    addHistoryRow(item);
+                    addCompactProductRow(group, item, TAB_SEARCH, false, group.getChildCount() > 0);
                 } else {
-                    addProductRow(item);
+                    addCompactProductRow(group, item, TAB_LISTS, true, group.getChildCount() > 0);
                 }
             }
         }
+        addProductListGroup(group);
     }
 
-    private void addHistoryRow(JSONObject item) {
-        addCompactProductRow(item, TAB_SEARCH, false);
+    private LinearLayout createProductListGroup() {
+        LinearLayout group = new LinearLayout(this);
+        group.setOrientation(LinearLayout.VERTICAL);
+        group.setBackgroundResource(R.drawable.bg_card);
+        group.setPadding(0, dp(4), 0, dp(4));
+        return group;
     }
 
-    private void addProductRow(JSONObject item) {
-        addCompactProductRow(item, TAB_LISTS, true);
+    private void addProductListGroup(LinearLayout group) {
+        if (group == null || group.getChildCount() == 0) {
+            return;
+        }
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        params.setMargins(0, 0, 0, dp(8));
+        dynamicContent.addView(group, params);
     }
 
-    private void addCompactProductRow(JSONObject item, int returnTab, boolean showRemoveButton) {
+    private void addCompactProductRow(
+            LinearLayout group,
+            JSONObject item,
+            int returnTab,
+            boolean showRemoveButton,
+            boolean showDivider) {
         String code = item.optString("code");
         ProductInfo savedProduct = productFromJson(item);
         String name = firstNonEmpty(item.optString("name"), "Produto sem nome");
@@ -3032,11 +3457,21 @@ public class MainActivity extends AppCompatActivity {
                 : "Sem nota suficiente";
         String score = item.optString("score");
 
+        if (showDivider) {
+            View divider = new View(this);
+            divider.setBackgroundColor(getColor(R.color.one_ui_stroke_soft));
+            LinearLayout.LayoutParams dividerParams = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    Math.max(1, dp(1)));
+            dividerParams.setMargins(dp(70), 0, dp(12), 0);
+            group.addView(divider, dividerParams);
+        }
+
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(android.view.Gravity.CENTER_VERTICAL);
         row.setBackgroundResource(R.drawable.bg_result_row);
-        row.setPadding(dp(6), dp(6), dp(6), dp(6));
+        row.setPadding(dp(10), dp(8), dp(10), dp(8));
         row.setOnClickListener(view -> openProductDetails(code, returnTab, savedProduct));
 
         FrameLayout productPreview = new FrameLayout(this);
@@ -3067,15 +3502,14 @@ public class MainActivity extends AppCompatActivity {
         }
         FrameLayout.LayoutParams scoreParams = new FrameLayout.LayoutParams(dp(28), dp(28));
         scoreParams.gravity = android.view.Gravity.TOP | android.view.Gravity.END;
-        scoreParams.setMargins(0, dp(-2), dp(-2), 0);
         productPreview.addView(scoreView, scoreParams);
 
-        LinearLayout.LayoutParams previewParams = new LinearLayout.LayoutParams(dp(52), dp(52));
+        LinearLayout.LayoutParams previewParams = new LinearLayout.LayoutParams(dp(60), dp(52));
         row.addView(productPreview, previewParams);
 
         LinearLayout texts = new LinearLayout(this);
         texts.setOrientation(LinearLayout.VERTICAL);
-        texts.setPadding(dp(10), 0, 0, 0);
+        texts.setPadding(dp(8), 0, 0, 0);
 
         TextView title = new TextView(this);
         title.setText(name);
@@ -3109,7 +3543,8 @@ public class MainActivity extends AppCompatActivity {
             removeButton.setColorFilter(getColor(R.color.one_ui_danger));
             removeButton.setBackgroundResource(R.drawable.bg_icon_action);
             removeButton.setContentDescription("Remover da lista");
-            removeButton.setPadding(dp(7), dp(7), dp(7), dp(7));
+            removeButton.setScaleType(ImageView.ScaleType.CENTER);
+            removeButton.setPadding(dp(9), dp(9), dp(9), dp(9));
             removeButton.setOnClickListener(view -> showRemoveSavedProductConfirmation(code, name, () -> {
                 renderLocalList(
                         currentListTitle,
@@ -3121,16 +3556,14 @@ public class MainActivity extends AppCompatActivity {
                     updateSaveButtonState();
                 }
             }));
-            LinearLayout.LayoutParams removeParams = new LinearLayout.LayoutParams(dp(36), dp(36));
-            removeParams.setMargins(dp(4), 0, 0, 0);
+            LinearLayout.LayoutParams removeParams = new LinearLayout.LayoutParams(dp(40), dp(40));
+            removeParams.setMargins(dp(8), 0, 0, 0);
             row.addView(removeButton, removeParams);
         }
 
-        LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(
+        group.addView(row, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT);
-        rowParams.setMargins(0, 0, 0, dp(1));
-        dynamicContent.addView(row, rowParams);
+                ViewGroup.LayoutParams.WRAP_CONTENT));
     }
 
     private void addInfoCard(String titleText, String bodyText) {
@@ -3777,15 +4210,10 @@ public class MainActivity extends AppCompatActivity {
             return;
         }
         boolean saved = isProductSaved(currentProduct.code);
-        btnSaveProduct.setText(saved ? "Remover da lista" : "Salvar na lista");
-        btnSaveProduct.setTextColor(getColor(saved ? R.color.one_ui_danger : R.color.one_ui_accent));
-        btnSaveProduct.setCompoundDrawablesWithIntrinsicBounds(
-                saved ? R.drawable.ic_delete : R.drawable.ic_star,
-                0,
-                0,
-                0);
-        btnSaveProduct.setCompoundDrawableTintList(android.content.res.ColorStateList.valueOf(
-                getColor(saved ? R.color.one_ui_danger : R.color.one_ui_accent)));
+        btnSaveProduct.setPadding(dp(9), dp(9), dp(9), dp(9));
+        btnSaveProduct.setContentDescription(saved ? "Remover da lista" : "Salvar na lista");
+        btnSaveProduct.setImageResource(saved ? R.drawable.ic_delete : R.drawable.ic_star);
+        btnSaveProduct.setColorFilter(getColor(saved ? R.color.one_ui_danger : R.color.one_ui_accent));
     }
 
     private boolean isProductSaved(String code) {
@@ -4505,6 +4933,74 @@ public class MainActivity extends AppCompatActivity {
     protected void onDestroy() {
         super.onDestroy();
         executor.shutdownNow();
+    }
+
+    private static class AssessmentBarView extends View {
+        private final int score;
+        private final int dangerColor;
+        private final int warningColor;
+        private final int goodColor;
+        private final int markerFillColor;
+        private final int markerStrokeColor;
+        private final Paint barPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint markerPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint markerStrokePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final RectF barRect = new RectF();
+
+        AssessmentBarView(
+                android.content.Context context,
+                int score,
+                int dangerColor,
+                int warningColor,
+                int goodColor,
+                int markerFillColor,
+                int markerStrokeColor) {
+            super(context);
+            this.score = score;
+            this.dangerColor = dangerColor;
+            this.warningColor = warningColor;
+            this.goodColor = goodColor;
+            this.markerFillColor = markerFillColor;
+            this.markerStrokeColor = markerStrokeColor;
+            markerPaint.setStyle(Paint.Style.FILL);
+            markerPaint.setColor(markerFillColor);
+            markerStrokePaint.setStyle(Paint.Style.STROKE);
+            markerStrokePaint.setStrokeWidth(4f);
+            markerStrokePaint.setColor(markerStrokeColor);
+        }
+
+        @Override
+        protected void onDraw(Canvas canvas) {
+            super.onDraw(canvas);
+            float width = getWidth();
+            float height = getHeight();
+            if (width <= 0 || height <= 0) {
+                return;
+            }
+
+            float markerRadius = Math.min(height * 0.34f, 14f);
+            float barHeight = Math.max(10f, height * 0.42f);
+            float left = markerRadius;
+            float right = width - markerRadius;
+            float top = (height - barHeight) / 2f;
+            float bottom = top + barHeight;
+            barRect.set(left, top, right, bottom);
+
+            barPaint.setShader(new LinearGradient(
+                    left,
+                    0,
+                    right,
+                    0,
+                    new int[]{dangerColor, warningColor, goodColor},
+                    new float[]{0f, 0.5f, 1f},
+                    Shader.TileMode.CLAMP));
+            canvas.drawRoundRect(barRect, barHeight / 2f, barHeight / 2f, barPaint);
+
+            float markerX = left + ((right - left) * score / 100f);
+            float markerY = height / 2f;
+            canvas.drawCircle(markerX, markerY, markerRadius, markerPaint);
+            canvas.drawCircle(markerX, markerY, markerRadius, markerStrokePaint);
+        }
     }
 
     private static class ProductInfo {

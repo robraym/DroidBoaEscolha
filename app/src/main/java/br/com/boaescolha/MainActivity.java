@@ -19,6 +19,7 @@ import android.text.Editable;
 import android.text.Html;
 import android.text.TextUtils;
 import android.text.TextWatcher;
+import android.util.Log;
 import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
@@ -42,9 +43,12 @@ import com.google.android.gms.auth.api.signin.GoogleSignIn;
 import com.google.android.gms.auth.api.signin.GoogleSignInAccount;
 import com.google.android.gms.auth.api.signin.GoogleSignInClient;
 import com.google.android.gms.auth.api.signin.GoogleSignInOptions;
+import com.google.android.gms.auth.api.signin.GoogleSignInStatusCodes;
 import com.google.android.gms.common.api.ApiException;
+import com.google.android.gms.common.api.CommonStatusCodes;
 import com.google.android.gms.tasks.Task;
 import com.google.firebase.auth.AuthCredential;
+import com.google.firebase.auth.FirebaseAuthException;
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
 import com.google.firebase.auth.GoogleAuthProvider;
@@ -76,6 +80,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public class MainActivity extends AppCompatActivity {
+    private static final String TAG = "BoaEscolha";
     private static final String OPEN_FOOD_FACTS_API_URL = "https://world.openfoodfacts.org/api/v2/product/";
     private static final String OPEN_PRODUCTS_FACTS_API_URL = "https://world.openproductsfacts.org/api/v2/product/";
     private static final String ANVISA_NEWS_URL = "https://www.gov.br/anvisa/pt-br/assuntos/noticias-anvisa/";
@@ -4356,7 +4361,8 @@ public class MainActivity extends AppCompatActivity {
                 GoogleSignInAccount account = task.getResult(ApiException.class);
                 firebaseAuthWithGoogle(account);
             } catch (ApiException exception) {
-                showMessage("Não consegui entrar com Google. Confira o Firebase e tente novamente.");
+                Log.w(TAG, "Google Sign-In failed", exception);
+                showMessage(buildGoogleSignInErrorMessage(exception));
             }
             return;
         }
@@ -4419,8 +4425,59 @@ public class MainActivity extends AppCompatActivity {
                     showProfile();
                     showMessage("Conta Google conectada e sincronizando.");
                 })
-                .addOnFailureListener(exception ->
-                        showMessage("Não consegui autenticar no Firebase. Verifique se Google está ativado no Firebase Auth."));
+                .addOnFailureListener(exception -> {
+                    Log.w(TAG, "Firebase Google authentication failed", exception);
+                    showMessage(buildFirebaseAuthErrorMessage(exception));
+                });
+    }
+
+    private String buildGoogleSignInErrorMessage(ApiException exception) {
+        int statusCode = exception.getStatusCode();
+        String statusName = GoogleSignInStatusCodes.getStatusCodeString(statusCode);
+        String guidance;
+        switch (statusCode) {
+            case CommonStatusCodes.DEVELOPER_ERROR:
+                guidance = "A configuração do app não bate com o Firebase. Confira SHA-1/SHA-256, pacote e google-services.json.";
+                break;
+            case CommonStatusCodes.NETWORK_ERROR:
+                guidance = "Parece problema de internet ou Google Play Services no aparelho.";
+                break;
+            case CommonStatusCodes.INTERNAL_ERROR:
+                guidance = "O Google Play Services falhou internamente. Reinicie o aparelho ou atualize o Google Play Services.";
+                break;
+            case GoogleSignInStatusCodes.SIGN_IN_CANCELLED:
+                guidance = "O login foi cancelado antes de concluir.";
+                break;
+            case GoogleSignInStatusCodes.SIGN_IN_CURRENTLY_IN_PROGRESS:
+                guidance = "Já existe uma tentativa de login em andamento. Feche e tente novamente.";
+                break;
+            case GoogleSignInStatusCodes.SIGN_IN_FAILED:
+                guidance = "O Google não concluiu o login neste aparelho. Confira conta Google e Google Play Services.";
+                break;
+            default:
+                guidance = "Confira a conta Google, o Google Play Services e a configuração do Firebase.";
+                break;
+        }
+        return "Falha no Google Sign-In (" + statusName + ", código " + statusCode + "). " + guidance;
+    }
+
+    private String buildFirebaseAuthErrorMessage(Exception exception) {
+        String errorCode = exception instanceof FirebaseAuthException
+                ? ((FirebaseAuthException) exception).getErrorCode()
+                : exception.getClass().getSimpleName();
+        String guidance;
+        if ("ERROR_INVALID_CREDENTIAL".equals(errorCode) || "ERROR_MISSING_OR_INVALID_NONCE".equals(errorCode)) {
+            guidance = "O token do Google foi recusado. Confira SHA-1/SHA-256 e baixe um google-services.json novo.";
+        } else if ("ERROR_ACCOUNT_EXISTS_WITH_DIFFERENT_CREDENTIAL".equals(errorCode)) {
+            guidance = "Já existe uma conta com esse e-mail usando outro método de login.";
+        } else if ("ERROR_OPERATION_NOT_ALLOWED".equals(errorCode)) {
+            guidance = "Ative o provedor Google no Firebase Authentication.";
+        } else if ("FirebaseNetworkException".equals(errorCode)) {
+            guidance = "Confira a internet do aparelho.";
+        } else {
+            guidance = "Confira Firebase Authentication, google-services.json e as permissões do projeto.";
+        }
+        return "Firebase recusou o login (" + errorCode + "). " + guidance;
     }
 
     private String buildNameFromEmail(String email) {

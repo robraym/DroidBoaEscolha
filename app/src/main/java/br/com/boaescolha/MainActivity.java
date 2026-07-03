@@ -12,11 +12,13 @@ import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.LinearGradient;
 import android.graphics.Paint;
+import android.graphics.Rect;
 import android.graphics.RectF;
 import android.graphics.Shader;
 import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -44,6 +46,8 @@ import android.widget.TextView;
 import androidx.activity.OnBackPressedCallback;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.appcompat.app.AppCompatDelegate;
+import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowInsetsCompat;
 
 import com.google.android.gms.auth.api.signin.GoogleSignIn;
 import com.google.android.gms.auth.api.signin.GoogleSignInAccount;
@@ -200,6 +204,8 @@ public class MainActivity extends AppCompatActivity {
     private int recallLoadedPages;
     private boolean loadingRecalls;
     private boolean suppressSearchUpdates;
+    private boolean bottomNavigationRequestedVisible = true;
+    private boolean keyboardVisible;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -248,6 +254,7 @@ public class MainActivity extends AppCompatActivity {
         textRecalls = findViewById(R.id.textRecalls);
 
         applySystemNavigationInsets(bottomNav);
+        hideBottomNavigationWhileKeyboardIsOpen();
 
         configureProductSearchAction();
         btnSaveProduct.setOnClickListener(view -> saveCurrentProduct());
@@ -357,7 +364,48 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void setBottomNavigationVisible(boolean visible) {
-        bottomNav.setVisibility(visible ? View.VISIBLE : View.GONE);
+        bottomNavigationRequestedVisible = visible;
+        updateBottomNavigationVisibility();
+    }
+
+    private void hideBottomNavigationWhileKeyboardIsOpen() {
+        View content = findViewById(android.R.id.content);
+        if (content == null) {
+            return;
+        }
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            View decorView = getWindow().getDecorView();
+            decorView.getViewTreeObserver().addOnGlobalLayoutListener(() -> {
+                Rect visibleWindow = new Rect();
+                decorView.getWindowVisibleDisplayFrame(visibleWindow);
+                int windowHeight = decorView.getRootView().getHeight();
+                int coveredHeight = windowHeight - visibleWindow.height();
+                setKeyboardVisible(coveredHeight > windowHeight * 0.15f);
+            });
+            return;
+        }
+        ViewCompat.setOnApplyWindowInsetsListener(content, (view, insets) -> {
+            setKeyboardVisible(insets.isVisible(WindowInsetsCompat.Type.ime()));
+            return insets;
+        });
+        ViewCompat.requestApplyInsets(content);
+    }
+
+    private void setKeyboardVisible(boolean visible) {
+        if (keyboardVisible == visible) {
+            return;
+        }
+        keyboardVisible = visible;
+        updateBottomNavigationVisibility();
+    }
+
+    private void updateBottomNavigationVisibility() {
+        int visibility = bottomNavigationRequestedVisible && !keyboardVisible
+                ? View.VISIBLE
+                : View.GONE;
+        if (bottomNav.getVisibility() != visibility) {
+            bottomNav.setVisibility(visibility);
+        }
         updateBottomNavigationSpacing();
     }
 

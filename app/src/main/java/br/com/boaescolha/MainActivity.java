@@ -71,7 +71,9 @@ import org.json.JSONObject;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.io.BufferedInputStream;
 import java.io.BufferedReader;
 import java.io.InputStream;
@@ -84,6 +86,7 @@ import java.text.Normalizer;
 import java.util.Calendar;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.regex.Matcher;
@@ -121,6 +124,7 @@ public class MainActivity extends AppCompatActivity {
     private static final int RECALL_FILTER_GROUP_ORDER = 105;
     private static final int FIRST_RECALL_YEAR = 2020;
     private static final long PRODUCT_CACHE_TTL_MS = 6L * 60L * 60L * 1000L;
+    private static final long RECALL_CACHE_TTL_MS = 24L * 60L * 60L * 1000L;
     private static final String PRODUCT_IMAGE_CACHE_DIR = "product_images";
     private static final Pattern ANVISA_ARTICLE_PATTERN = Pattern.compile("(?is)<article class=\"entry\">(.*?)</article>");
     private static final Pattern ANVISA_TITLE_PATTERN = Pattern.compile("(?is)<a href=\"([^\"]+)\"[^>]*>(.*?)</a>");
@@ -133,6 +137,7 @@ public class MainActivity extends AppCompatActivity {
 
     private final ExecutorService executor = Executors.newFixedThreadPool(2);
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    private final Set<String> recallChecksInProgress = Collections.synchronizedSet(new HashSet<>());
     private FirebaseAuth firebaseAuth;
     private FirebaseFirestore firestore;
     private GoogleSignInClient googleSignInClient;
@@ -558,6 +563,7 @@ public class MainActivity extends AppCompatActivity {
         if (isFreshSavedProduct(savedProduct, code)) {
             currentCode = code;
             showProduct(savedProduct);
+            enrichProductRecallAlertInBackground(savedProduct);
             return;
         }
         showProductLoading(code);
@@ -588,6 +594,7 @@ public class MainActivity extends AppCompatActivity {
                 if (result.errorMessage != null) {
                     if (savedProduct != null) {
                         showProduct(savedProduct);
+                        enrichProductRecallAlertInBackground(savedProduct);
                         addDetailNotice("Não foi possível atualizar os dados agora. Exibindo as informações salvas.");
                     } else {
                         showProductLoadError(result.errorMessage);
@@ -595,6 +602,7 @@ public class MainActivity extends AppCompatActivity {
                 } else if (result.product == null) {
                     if (savedProduct != null) {
                         showProduct(savedProduct);
+                        enrichProductRecallAlertInBackground(savedProduct);
                         addDetailNotice("Este produto não foi encontrado na consulta atual. Exibindo as informações salvas.");
                     } else {
                         showProductLoadError("Produto não encontrado. Confira o código ou tente escanear outro item.");
@@ -1607,9 +1615,13 @@ public class MainActivity extends AppCompatActivity {
         brandParams.setMargins(0, dp(4), 0, 0);
         identity.addView(txtBrand, brandParams);
 
+        boolean hasRecallAlert = !TextUtils.isEmpty(product.recallAlertTitle);
         txtNutriScore = new TextView(this);
         boolean partialClassification = product.score.source.toLowerCase(Locale.ROOT).contains("parcial");
-        txtNutriScore.setText(product.score.hasScore
+        txtNutriScore.setText(hasRecallAlert
+                ? "Alerta da Anvisa • classificação nutricional original "
+                + (product.score.hasScore ? product.score.grade : "indisponível")
+                : product.score.hasScore
                 ? "Leitura Decifrou" + (partialClassification ? " • estimativa parcial" : "")
                 + (!TextUtils.isEmpty(product.nutriScore)
                 ? " • Nutri-Score " + product.nutriScore.toUpperCase(Locale.ROOT)
@@ -1632,9 +1644,8 @@ public class MainActivity extends AppCompatActivity {
                 ViewGroup.LayoutParams.WRAP_CONTENT));
 
         txtClassification = new TextView(this);
-        boolean hasRecallAlert = !TextUtils.isEmpty(product.recallAlertTitle);
         txtClassification.setText(hasRecallAlert
-                ? "Evite: alerta da Anvisa"
+                ? "Alerta da Anvisa: verifique o lote"
                 : product.score.hasScore
                 ? product.score.classification
                 : "Dados insuficientes");
@@ -1664,7 +1675,10 @@ public class MainActivity extends AppCompatActivity {
         classificationDetailsParams.setMargins(0, 0, 0, dp(10));
         dynamicContent.addView(classificationDetails, classificationDetailsParams);
 
-        if (product.score.hasScore) {
+        if (hasRecallAlert) {
+            txtScore.setText("E");
+            updateScoreColor(10);
+        } else if (product.score.hasScore) {
             txtScore.setText(product.score.grade);
             updateScoreColor(product.score.value);
         } else {
@@ -1758,6 +1772,11 @@ public class MainActivity extends AppCompatActivity {
                 firstNonEmpty(product.recallAlertProductName, "Produto relacionado"),
                 "Este produto pode estar relacionado a uma notificação oficial da Anvisa.",
                 R.color.one_ui_warning);
+        addDetailParagraph(
+                alert,
+                "Confira a embalagem",
+                "O código de barras identifica o produto, mas não o lote. Confira o lote e a data de fabricação no aviso oficial antes de descartar ou interromper o uso.",
+                R.color.one_ui_text_secondary);
         addOptionalDetailRow(alert, "Tipo", product.recallAlertType);
         addOptionalDetailRow(alert, "Data", product.recallAlertDate);
         addOptionalDetailRow(alert, "Fonte", firstNonEmpty(product.recallAlertSource, SOURCE_ANVISA));
@@ -2592,16 +2611,17 @@ public class MainActivity extends AppCompatActivity {
         return items;
     }
 
-    private void enrichProductRecallAlert(ProductInfo product) {
+    private boolean enrichProductRecallAlert(ProductInfo product) {
         if (product == null || (TextUtils.isEmpty(product.name) && TextUtils.isEmpty(product.brand))) {
-            return;
+            return false;
         }
 
         ArrayList<String> terms = productRecallTerms(product);
         if (terms.isEmpty()) {
-            return;
+            return false;
         }
 
+        boolean checkedAnyPage = false;
         int currentYear = Calendar.getInstance().get(Calendar.YEAR);
         for (int year = currentYear; year >= Math.max(FIRST_RECALL_YEAR, currentYear - 1); year--) {
             for (int offset = 0;
@@ -2611,6 +2631,7 @@ public class MainActivity extends AppCompatActivity {
                 if (TextUtils.isEmpty(html)) {
                     continue;
                 }
+                checkedAnyPage = true;
 
                 JSONArray alerts = parseAnvisaRecallItems(html);
                 for (int index = 0; index < alerts.length(); index++) {
@@ -2620,7 +2641,14 @@ public class MainActivity extends AppCompatActivity {
                     }
                     if (productMatchesRecallAlert(product, terms, alert, false)) {
                         applyProductRecallAlert(product, alert);
-                        return;
+                        return true;
+                    }
+                    if (recallAlertMentionsBrand(product, alert)) {
+                        String detailText = fetchAnvisaRecallDetailText(alert.optString("url"));
+                        if (productMatchesRecallAlert(product, terms, alert, true, detailText)) {
+                            applyProductRecallAlert(product, alert);
+                            return true;
+                        }
                     }
                 }
 
@@ -2629,29 +2657,44 @@ public class MainActivity extends AppCompatActivity {
                 }
             }
         }
+        return checkedAnyPage;
     }
 
     private void enrichProductRecallAlertInBackground(ProductInfo product) {
         if (product == null || TextUtils.isEmpty(product.code) || !TextUtils.isEmpty(product.recallAlertTitle)) {
             return;
         }
+        if (product.recallCheckedAt > 0
+                && System.currentTimeMillis() - product.recallCheckedAt < RECALL_CACHE_TTL_MS) {
+            return;
+        }
 
         String code = product.code;
+        if (!recallChecksInProgress.add(code)) {
+            return;
+        }
         executor.execute(() -> {
-            enrichProductRecallAlert(product);
-            mainHandler.post(() -> {
-                if (TextUtils.isEmpty(product.recallAlertTitle)) {
+            try {
+                boolean recallCheckCompleted = enrichProductRecallAlert(product);
+                if (!recallCheckCompleted) {
                     return;
                 }
-                addLocalItem(KEY_HISTORY, product);
-                if (isProductSaved(product.code)) {
-                    addLocalItem(KEY_SAVED_PRODUCTS, product);
-                }
-                if (showingProductDetails && code.equals(currentCode)) {
-                    showProduct(product);
-                    addDetailNotice("Alerta da Anvisa encontrado e adicionado ao produto.");
-                }
-            });
+                product.recallCheckedAt = System.currentTimeMillis();
+                mainHandler.post(() -> {
+                    addLocalItem(KEY_HISTORY, product);
+                    if (isProductSaved(product.code)) {
+                        addLocalItem(KEY_SAVED_PRODUCTS, product);
+                    }
+                    if (!TextUtils.isEmpty(product.recallAlertTitle)
+                            && showingProductDetails
+                            && code.equals(currentCode)) {
+                        showProduct(product);
+                        addDetailNotice("Alerta da Anvisa encontrado e adicionado ao produto.");
+                    }
+                });
+            } finally {
+                recallChecksInProgress.remove(code);
+            }
         });
     }
 
@@ -2746,12 +2789,15 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private boolean productMatchesRecallAlert(ProductInfo product, ArrayList<String> terms, JSONObject alert, boolean detailChecked, String detailText) {
-        String alertText = normalizedRecallAlertText(alert);
+        String alertText = normalizeSearchText(normalizedRecallAlertText(alert) + " " + detailText);
         if (TextUtils.isEmpty(alertText)) {
             return false;
         }
+        if (!TextUtils.isEmpty(product.code) && alertText.contains(normalizeSearchText(product.code))) {
+            return true;
+        }
 
-        ArrayList<String> productTerms = productRecallTerms(product);
+        ArrayList<String> productTerms = terms != null ? terms : productRecallTerms(product);
         ArrayList<String> brandTerms = productBrandTerms(product);
         if (!brandTerms.isEmpty()) {
             if (!containsAnyRecallTerm(alertText, brandTerms)) {
@@ -2767,6 +2813,12 @@ public class MainActivity extends AppCompatActivity {
             }
         }
         return matches >= 3;
+    }
+
+    private boolean recallAlertMentionsBrand(ProductInfo product, JSONObject alert) {
+        ArrayList<String> brandTerms = productBrandTerms(product);
+        return !brandTerms.isEmpty()
+                && containsAnyRecallTerm(normalizedRecallAlertText(alert), brandTerms);
     }
 
     private String normalizedRecallAlertText(JSONObject alert) {
@@ -2806,7 +2858,8 @@ public class MainActivity extends AppCompatActivity {
         if (TextUtils.isEmpty(text) || TextUtils.isEmpty(term)) {
             return false;
         }
-        return Pattern.compile("(^|[^a-z0-9])" + Pattern.quote(term) + "([^a-z0-9]|$)")
+        String pluralSuffix = term.matches("[a-z0-9]+") ? "s?" : "";
+        return Pattern.compile("(^|[^a-z0-9])" + Pattern.quote(term) + pluralSuffix + "([^a-z0-9]|$)")
                 .matcher(text)
                 .find();
     }
@@ -3673,7 +3726,7 @@ public class MainActivity extends AppCompatActivity {
         String name = firstNonEmpty(item.optString("name"), "Produto sem nome");
         String brand = firstNonEmpty(item.optString("brand"), "Marca não informada");
         String classification = !TextUtils.isEmpty(savedProduct.recallAlertTitle)
-                ? "Evite: alerta da Anvisa"
+                ? "Alerta da Anvisa: verifique o lote"
                 : savedProduct.score != null && savedProduct.score.hasScore
                 ? savedProduct.score.classification
                 : "Dados insuficientes";
@@ -3712,14 +3765,18 @@ public class MainActivity extends AppCompatActivity {
 
         TextView scoreView = new TextView(this);
         scoreView.setGravity(android.view.Gravity.CENTER);
-        scoreView.setText(savedProduct.score.hasScore ? savedProduct.score.grade : "-");
+        boolean hasRecallAlert = !TextUtils.isEmpty(savedProduct.recallAlertTitle);
+        scoreView.setText(hasRecallAlert
+                ? "E"
+                : savedProduct.score.hasScore ? savedProduct.score.grade : "-");
         scoreView.setTextColor(getColor(android.R.color.white));
         scoreView.setTextSize(10);
         scoreView.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
         scoreView.setBackgroundResource(R.drawable.bg_score_circle);
         if (scoreView.getBackground() instanceof GradientDrawable) {
             GradientDrawable background = (GradientDrawable) scoreView.getBackground().mutate();
-            background.setColor(getColor(scoreColorRes(savedProduct.score.value)));
+            background.setColor(getColor(scoreColorRes(
+                    hasRecallAlert ? 10 : savedProduct.score.value)));
         }
         FrameLayout.LayoutParams scoreParams = new FrameLayout.LayoutParams(dp(28), dp(28));
         scoreParams.gravity = android.view.Gravity.TOP | android.view.Gravity.END;
@@ -4532,6 +4589,7 @@ public class MainActivity extends AppCompatActivity {
             json.put("recallAlertDate", firstNonEmpty(product.recallAlertDate, ""));
             json.put("recallAlertUrl", firstNonEmpty(product.recallAlertUrl, ""));
             json.put("recallAlertSource", firstNonEmpty(product.recallAlertSource, ""));
+            json.put("recallCheckedAt", product.recallCheckedAt);
         } catch (Exception ignored) {
         }
         return json;
@@ -4586,6 +4644,7 @@ public class MainActivity extends AppCompatActivity {
         map.put("recallAlertDate", firstNonEmpty(product.recallAlertDate, ""));
         map.put("recallAlertUrl", firstNonEmpty(product.recallAlertUrl, ""));
         map.put("recallAlertSource", firstNonEmpty(product.recallAlertSource, ""));
+        map.put("recallCheckedAt", product.recallCheckedAt);
         map.put("updatedAt", System.currentTimeMillis());
         return map;
     }
@@ -4687,6 +4746,7 @@ public class MainActivity extends AppCompatActivity {
         product.recallAlertDate = item.optString("recallAlertDate");
         product.recallAlertUrl = item.optString("recallAlertUrl");
         product.recallAlertSource = item.optString("recallAlertSource");
+        product.recallCheckedAt = item.optLong("recallCheckedAt", 0);
         String savedScore = item.optString("score");
         String savedGrade = item.optString("grade").toUpperCase(Locale.ROOT);
         int score = parseScore(savedScore);
@@ -4821,6 +4881,8 @@ public class MainActivity extends AppCompatActivity {
                 item.put("recallAlertDate", firstNonEmpty(document.getString("recallAlertDate"), ""));
                 item.put("recallAlertUrl", firstNonEmpty(document.getString("recallAlertUrl"), ""));
                 item.put("recallAlertSource", firstNonEmpty(document.getString("recallAlertSource"), ""));
+                Long recallCheckedAt = document.getLong("recallCheckedAt");
+                item.put("recallCheckedAt", recallCheckedAt != null ? recallCheckedAt : 0);
                 Long score = document.getLong("score");
                 item.put("score", score != null && score >= 0 ? String.valueOf(score) : "");
                 items.put(item);
@@ -4900,8 +4962,8 @@ public class MainActivity extends AppCompatActivity {
             }
         }
         sorted.sort((left, right) -> {
-            int leftScore = parseScore(left.optString("score"));
-            int rightScore = parseScore(right.optString("score"));
+            int leftScore = displayScoreForSavedItem(left);
+            int rightScore = displayScoreForSavedItem(right);
             return highestFirst ? rightScore - leftScore : leftScore - rightScore;
         });
 
@@ -4910,6 +4972,13 @@ public class MainActivity extends AppCompatActivity {
             result.put(item);
         }
         return result;
+    }
+
+    private int displayScoreForSavedItem(JSONObject item) {
+        if (item != null && !TextUtils.isEmpty(item.optString("recallAlertTitle"))) {
+            return 0;
+        }
+        return item != null ? parseScore(item.optString("score")) : -1;
     }
 
     private int parseScore(String score) {
@@ -5301,6 +5370,7 @@ public class MainActivity extends AppCompatActivity {
         String recallAlertDate;
         String recallAlertUrl;
         String recallAlertSource;
+        long recallCheckedAt;
         ScoreInfo score;
     }
 

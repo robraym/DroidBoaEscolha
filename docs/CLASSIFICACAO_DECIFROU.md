@@ -60,6 +60,15 @@ mas nunca melhorar o resultado além do Nutri-Score informado pela fonte.
 
 O usuário vê apenas a letra e a explicação dos critérios utilizados.
 
+## Alertas da Anvisa
+
+- A classificação nutricional aparece primeiro; a consulta de recolhimentos roda em
+  segundo plano e não bloqueia o resultado.
+- Uma verificação concluída sem alerta fica em cache por 24 horas.
+- Se houver correspondência de produto e marca, a interface passa a mostrar `E` em
+  vermelho e destaca o alerta, preservando internamente a letra nutricional original.
+- Falha de rede não é armazenada como verificação concluída.
+
 ## Referências
 
 - Open Food Facts API: https://openfoodfacts.github.io/documentation/

@@ -90,14 +90,12 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public class MainActivity extends AppCompatActivity {
-    private static final String TAG = "BoaEscolha";
-    private static final String OPEN_FOOD_FACTS_API_URL = "https://world.openfoodfacts.org/api/v2/product/";
-    private static final String OPEN_PRODUCTS_FACTS_API_URL = "https://world.openproductsfacts.org/api/v2/product/";
+    private static final String TAG = "Decifrou";
+    private static final String OPEN_FOOD_FACTS_API_URL = "https://world.openfoodfacts.org/api/v3/product/";
     private static final String ANVISA_NEWS_URL = "https://www.gov.br/anvisa/pt-br/assuntos/noticias-anvisa/";
     private static final String SOURCE_OPEN_FOOD_FACTS = "Open Food Facts";
-    private static final String SOURCE_OPEN_PRODUCTS_FACTS = "Open Products Facts";
     private static final String SOURCE_ANVISA = "Anvisa";
-    private static final String USER_AGENT = "BoaEscolhaAndroid/1.0 (Android; contato-local)";
+    private static final String USER_AGENT = "DecifrouAndroid/1.0 (Android; contato-local)";
     private static final int REQUEST_CAMERA_PERMISSION = 1001;
     private static final int REQUEST_BARCODE_SCAN = 1002;
     private static final int REQUEST_GOOGLE_ACCOUNT = 1003;
@@ -615,20 +613,8 @@ public class MainActivity extends AppCompatActivity {
 
     private ProductResult fetchProduct(String code) {
         ProductSourceResult primary = fetchProductJson(OPEN_FOOD_FACTS_API_URL, SOURCE_OPEN_FOOD_FACTS, code);
-        ProductSourceResult supplemental = null;
-
         if (primary.product != null) {
-            if (shouldTrySupplementalSource(primary.product)) {
-                supplemental = fetchProductJson(OPEN_PRODUCTS_FACTS_API_URL, SOURCE_OPEN_PRODUCTS_FACTS, code);
-            }
-            JSONObject mergedProduct = mergeProductData(primary.product, supplemental != null ? supplemental.product : null);
-            ProductInfo product = buildProductInfo(code, mergedProduct, sourceSummary(primary, supplemental));
-            return ProductResult.success(product);
-        }
-
-        supplemental = fetchProductJson(OPEN_PRODUCTS_FACTS_API_URL, SOURCE_OPEN_PRODUCTS_FACTS, code);
-        if (supplemental.product != null) {
-            ProductInfo product = buildProductInfo(code, supplemental.product, sourceSummary(null, supplemental));
+            ProductInfo product = buildProductInfo(code, primary.product, sourceSummary(primary, null));
             return ProductResult.success(product);
         }
 
@@ -641,7 +627,7 @@ public class MainActivity extends AppCompatActivity {
     private ProductSourceResult fetchProductJson(String baseUrl, String sourceName, String code) {
         HttpURLConnection connection = null;
         try {
-            URL url = new URL(baseUrl + code);
+            URL url = new URL(baseUrl + code + ".json?product_type=all");
             connection = (HttpURLConnection) url.openConnection();
             connection.setConnectTimeout(12000);
             connection.setReadTimeout(12000);
@@ -793,127 +779,6 @@ public class MainActivity extends AppCompatActivity {
                 || text.contains("water, bottled");
     }
 
-    private boolean shouldTrySupplementalSource(JSONObject product) {
-        return TextUtils.isEmpty(firstNonEmpty(
-                product.optString("product_name_pt"),
-                product.optString("product_name"),
-                product.optString("generic_name_pt"),
-                product.optString("generic_name")))
-                || TextUtils.isEmpty(firstNonEmpty(
-                product.optString("image_front_url"),
-                product.optString("image_url")))
-                || TextUtils.isEmpty(product.optString("brands"))
-                || (TextUtils.isEmpty(readNutriScore(product)) && countScoreSignals(product) < 3);
-    }
-
-    private int countScoreSignals(JSONObject product) {
-        JSONObject nutriments = product.optJSONObject("nutriments");
-        if (nutriments == null) {
-            nutriments = new JSONObject();
-        }
-        JSONObject nutrientLevels = product.optJSONObject("nutrient_levels");
-
-        int signals = 0;
-        if (readFirstNutriment(nutriments, "sugars_100g", "sugars_value", "sugars") >= 0
-                || nutrientLevelPenalty(nutrientLevels, product, "sugars", 1, 1, 1) >= 0) {
-            signals++;
-        }
-        if (readFirstNutriment(nutriments, "saturated-fat_100g", "saturated-fat_value", "saturated-fat") >= 0
-                || nutrientLevelPenalty(nutrientLevels, product, "saturated-fat", 1, 1, 1) >= 0) {
-            signals++;
-        }
-        if (readFirstNutriment(nutriments, "salt_100g", "salt_value", "salt") >= 0
-                || readFirstNutriment(nutriments, "sodium_100g", "sodium_value", "sodium") >= 0
-                || nutrientLevelPenalty(nutrientLevels, product, "salt", 1, 1, 1) >= 0) {
-            signals++;
-        }
-        if (readFirstNutriment(nutriments, "energy-kcal_100g", "energy-kcal_value", "energy-kcal") >= 0
-                || readFirstNutriment(nutriments, "energy-kj_100g", "energy_100g", "energy-kj_value", "energy-kj") >= 0) {
-            signals++;
-        }
-        if (readFirstNutriment(nutriments, "fiber_100g", "fiber_value", "fiber") >= 0) {
-            signals++;
-        }
-        if (readFirstNutriment(nutriments, "proteins_100g", "proteins_value", "proteins") >= 0) {
-            signals++;
-        }
-        if (readNovaGroup(product, nutriments) > 0) {
-            signals++;
-        }
-        return signals;
-    }
-
-    private JSONObject mergeProductData(JSONObject primary, JSONObject supplemental) {
-        JSONObject merged;
-        try {
-            merged = primary != null ? new JSONObject(primary.toString()) : new JSONObject();
-            if (supplemental == null) {
-                return merged;
-            }
-
-            JSONArray keys = supplemental.names();
-            if (keys == null) {
-                return merged;
-            }
-
-            for (int index = 0; index < keys.length(); index++) {
-                String key = keys.optString(index);
-                Object supplementalValue = supplemental.opt(key);
-                if (!isUsefulJsonValue(supplementalValue)) {
-                    continue;
-                }
-
-                if ("nutriments".equals(key) || "nutrient_levels".equals(key)) {
-                    JSONObject targetNested = merged.optJSONObject(key);
-                    JSONObject supplementalNested = supplemental.optJSONObject(key);
-                    if (supplementalNested != null) {
-                        merged.put(key, mergeNestedJson(targetNested, supplementalNested));
-                    }
-                    continue;
-                }
-
-                if (!isUsefulJsonValue(merged.opt(key))) {
-                    merged.put(key, supplementalValue);
-                }
-            }
-        } catch (Exception exception) {
-            return primary != null ? primary : new JSONObject();
-        }
-        return merged;
-    }
-
-    private JSONObject mergeNestedJson(JSONObject primary, JSONObject supplemental) throws Exception {
-        JSONObject merged = primary != null ? new JSONObject(primary.toString()) : new JSONObject();
-        JSONArray keys = supplemental.names();
-        if (keys == null) {
-            return merged;
-        }
-        for (int index = 0; index < keys.length(); index++) {
-            String key = keys.optString(index);
-            if (!isUsefulJsonValue(merged.opt(key)) && isUsefulJsonValue(supplemental.opt(key))) {
-                merged.put(key, supplemental.opt(key));
-            }
-        }
-        return merged;
-    }
-
-    private boolean isUsefulJsonValue(Object value) {
-        if (value == null || value == JSONObject.NULL) {
-            return false;
-        }
-        if (value instanceof String) {
-            String text = ((String) value).trim();
-            return !TextUtils.isEmpty(text) && !"unknown".equalsIgnoreCase(text);
-        }
-        if (value instanceof JSONArray) {
-            return ((JSONArray) value).length() > 0;
-        }
-        if (value instanceof JSONObject) {
-            return ((JSONObject) value).length() > 0;
-        }
-        return true;
-    }
-
     private String sourceSummary(ProductSourceResult first, ProductSourceResult second) {
         ArrayList<String> sources = new ArrayList<>();
         addSourceName(sources, first);
@@ -1005,196 +870,525 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private ScoreInfo calculateScore(String nutriScore, JSONObject product, String dataSources) {
-        switch (nutriScore) {
-            case "a":
-                return ScoreInfo.withScore(
-                        100,
-                        classificationForScore(100),
-                        "Nutri-Score",
-                        nutriScoreExplanation("A", 100, dataSources));
-            case "b":
-                return ScoreInfo.withScore(
-                        80,
-                        classificationForScore(80),
-                        "Nutri-Score",
-                        nutriScoreExplanation("B", 80, dataSources));
-            case "c":
-                return ScoreInfo.withScore(
-                        60,
-                        classificationForScore(60),
-                        "Nutri-Score",
-                        nutriScoreExplanation("C", 60, dataSources));
-            case "d":
-                return ScoreInfo.withScore(
-                        40,
-                        classificationForScore(40),
-                        "Nutri-Score",
-                        nutriScoreExplanation("D", 40, dataSources));
-            case "e":
-                return ScoreInfo.withScore(
-                        20,
-                        classificationForScore(20),
-                        "Nutri-Score",
-                        nutriScoreExplanation("E", 20, dataSources));
-            default:
-                return estimateScoreFromNutrition(product, dataSources);
-        }
-    }
-
-    private ScoreInfo estimateScoreFromNutrition(JSONObject product, String dataSources) {
         JSONObject nutriments = product.optJSONObject("nutriments");
         if (nutriments == null) {
             nutriments = new JSONObject();
         }
-        JSONObject nutrientLevels = product.optJSONObject("nutrient_levels");
 
-        int signals = 0;
-        int score = 100;
-        ArrayList<String> usedSignals = new ArrayList<>();
-
-        double sugar = readFirstNutriment(nutriments, "sugars_100g", "sugars_value", "sugars");
-        if (sugar >= 0) {
-            signals++;
-            usedSignals.add("açúcares");
-            if (sugar > 45) {
-                score -= 25;
-            } else if (sugar > 22.5) {
-                score -= 18;
-            } else if (sugar > 10) {
-                score -= 10;
-            } else if (sugar > 5) {
-                score -= 4;
-            }
-        } else {
-            int levelPenalty = nutrientLevelPenalty(nutrientLevels, product, "sugars", 18, 9, 0);
-            if (levelPenalty >= 0) {
-                signals++;
-                usedSignals.add("nível de açúcares");
-                score -= levelPenalty;
-            }
-        }
-
-        double saturatedFat = readFirstNutriment(nutriments, "saturated-fat_100g", "saturated-fat_value", "saturated-fat");
-        if (saturatedFat >= 0) {
-            signals++;
-            usedSignals.add("gordura saturada");
-            if (saturatedFat > 10) {
-                score -= 18;
-            } else if (saturatedFat > 5) {
-                score -= 12;
-            } else if (saturatedFat > 2) {
-                score -= 6;
-            }
-        } else {
-            int levelPenalty = nutrientLevelPenalty(nutrientLevels, product, "saturated-fat", 16, 8, 0);
-            if (levelPenalty >= 0) {
-                signals++;
-                usedSignals.add("nível de gordura saturada");
-                score -= levelPenalty;
-            }
-        }
-
-        double salt = readFirstNutriment(nutriments, "salt_100g", "salt_value", "salt");
-        if (salt < 0) {
-            double sodium = readFirstNutriment(nutriments, "sodium_100g", "sodium_value", "sodium");
-            salt = sodium >= 0 ? sodium * 2.5 : -1;
-        }
-        if (salt >= 0) {
-            signals++;
-            usedSignals.add("sal");
-            if (salt > 1.5) {
-                score -= 18;
-            } else if (salt > 0.75) {
-                score -= 10;
-            } else if (salt > 0.3) {
-                score -= 4;
-            }
-        } else {
-            int levelPenalty = nutrientLevelPenalty(nutrientLevels, product, "salt", 16, 8, 0);
-            if (levelPenalty >= 0) {
-                signals++;
-                usedSignals.add("nível de sal");
-                score -= levelPenalty;
-            }
-        }
-
-        double energyKcal = readFirstNutriment(nutriments, "energy-kcal_100g", "energy-kcal_value", "energy-kcal");
-        if (energyKcal < 0) {
-            double energyKj = readFirstNutriment(nutriments, "energy-kj_100g", "energy_100g", "energy-kj_value", "energy-kj");
-            energyKcal = energyKj >= 0 ? energyKj / 4.184 : -1;
-        }
-        if (energyKcal >= 0) {
-            signals++;
-            usedSignals.add("energia");
-            if (energyKcal > 550) {
-                score -= 12;
-            } else if (energyKcal > 400) {
-                score -= 8;
-            } else if (energyKcal > 250) {
-                score -= 4;
-            }
-        }
-
+        double energyKcal = readEnergyKcal(nutriments);
+        double sugars = readFirstNutriment(nutriments, "sugars_100g", "sugars_value", "sugars");
+        double addedSugars = readFirstNutriment(
+                nutriments,
+                "added-sugars_100g",
+                "added-sugars_value",
+                "added-sugars");
+        double saturatedFat = readFirstNutriment(
+                nutriments,
+                "saturated-fat_100g",
+                "saturated-fat_value",
+                "saturated-fat");
+        double fat = readFirstNutriment(nutriments, "fat_100g", "fat_value", "fat");
+        double transFat = readFirstNutriment(
+                nutriments,
+                "trans-fat_100g",
+                "trans-fat_value",
+                "trans-fat");
+        double sodiumMg = readSodiumMg(nutriments);
         double fiber = readFirstNutriment(nutriments, "fiber_100g", "fiber_value", "fiber");
-        if (fiber >= 0) {
-            signals++;
-            usedSignals.add("fibras");
-            if (fiber >= 6) {
-                score += 8;
-            } else if (fiber >= 3) {
-                score += 4;
+        double proteins = readFirstNutriment(nutriments, "proteins_100g", "proteins_value", "proteins");
+        int novaGroup = readNovaGroup(product, nutriments);
+
+        boolean hasOfficialGrade = !TextUtils.isEmpty(nutriScore);
+        boolean hasCriticalNutrition = energyKcal >= 0
+                && sugars >= 0
+                && saturatedFat >= 0
+                && sodiumMg >= 0;
+        if (!hasOfficialGrade && !hasCriticalNutrition) {
+            ScoreInfo partialScore = calculatePartialScore(product, nutriments, dataSources);
+            if (partialScore.hasScore) {
+                return partialScore;
             }
+            return ScoreInfo.withoutScore(buildMissingNutritionMessage(
+                    energyKcal,
+                    sugars,
+                    saturatedFat,
+                    sodiumMg));
         }
 
-        double proteins = readFirstNutriment(nutriments, "proteins_100g", "proteins_value", "proteins");
-        if (proteins >= 0) {
-            signals++;
-            usedSignals.add("proteínas");
-            if (proteins >= 10) {
-                score += 4;
+        double weightedQuality = 0;
+        int totalWeight = 0;
+        ArrayList<String> criteria = new ArrayList<>();
+
+        if (hasOfficialGrade) {
+            weightedQuality += qualityForNutriScore(nutriScore) * 45;
+            totalWeight += 45;
+            criteria.add("Nutri-Score " + nutriScore.toUpperCase(Locale.ROOT));
+        }
+
+        if (hasCriticalNutrition) {
+            int nutritionQuality = calculateNutritionQuality(
+                    energyKcal,
+                    sugars,
+                    saturatedFat,
+                    sodiumMg,
+                    fiber,
+                    proteins);
+            int nutritionWeight = hasOfficialGrade ? 35 : 70;
+            weightedQuality += nutritionQuality * nutritionWeight;
+            totalWeight += nutritionWeight;
+            criteria.add("composição por 100 g ou 100 ml");
+        }
+
+        if (novaGroup > 0) {
+            weightedQuality += qualityForNova(novaGroup) * 20;
+            totalWeight += 20;
+            criteria.add("processamento NOVA " + novaGroup);
+        }
+
+        int quality = totalWeight > 0
+                ? clamp((int) Math.round(weightedQuality / totalWeight), 0, 100)
+                : 0;
+        if (hasOfficialGrade) {
+            quality = Math.min(quality, maximumQualityForNutriScore(nutriScore));
+        }
+
+        boolean liquid = isLiquidProduct(product);
+        int anvisaWarnings = countAnvisaWarnings(addedSugars, saturatedFat, sodiumMg, liquid);
+        int pahoWarnings = countPahoWarnings(
+                energyKcal,
+                addedSugars,
+                fat,
+                saturatedFat,
+                transFat,
+                sodiumMg);
+        quality = applyWarningCaps(quality, anvisaWarnings, pahoWarnings);
+
+        if (anvisaWarnings > 0) {
+            criteria.add(anvisaWarnings + (anvisaWarnings == 1
+                    ? " alerta pelos limites da Anvisa"
+                    : " alertas pelos limites da Anvisa"));
+        }
+        if (pahoWarnings > 0) {
+            criteria.add(pahoWarnings + (pahoWarnings == 1
+                    ? " excesso pelo perfil da OPAS"
+                    : " excessos pelo perfil da OPAS"));
+        }
+
+        String grade = gradeForQuality(quality);
+        String explanation = String.format(
+                Locale.getDefault(),
+                "Classificação Decifrou %s calculada a partir de %s. Fonte dos dados: %s. Valores ausentes nunca são tratados como zero.",
+                grade,
+                joinSignals(criteria),
+                firstNonEmpty(dataSources, SOURCE_OPEN_FOOD_FACTS));
+        return ScoreInfo.withScore(
+                quality,
+                grade,
+                classificationForGrade(grade),
+                "Critérios Decifrou",
+                explanation);
+    }
+
+    private double readEnergyKcal(JSONObject nutriments) {
+        double energyKcal = readFirstNutriment(
+                nutriments,
+                "energy-kcal_100g",
+                "energy-kcal_value",
+                "energy-kcal");
+        if (energyKcal >= 0) {
+            return energyKcal;
+        }
+        double energyKj = readFirstNutriment(
+                nutriments,
+                "energy-kj_100g",
+                "energy_100g",
+                "energy-kj_value",
+                "energy-kj");
+        return energyKj >= 0 ? energyKj / 4.184 : -1;
+    }
+
+    private double readSodiumMg(JSONObject nutriments) {
+        double sodium = readFirstNutriment(nutriments, "sodium_100g", "sodium_value", "sodium");
+        if (sodium >= 0) {
+            return sodium * 1000;
+        }
+        double salt = readFirstNutriment(nutriments, "salt_100g", "salt_value", "salt");
+        return salt >= 0 ? salt * 400 : -1;
+    }
+
+    private String buildMissingNutritionMessage(
+            double energyKcal,
+            double sugars,
+            double saturatedFat,
+            double sodiumMg) {
+        ArrayList<String> missing = new ArrayList<>();
+        if (energyKcal < 0) {
+            missing.add("energia");
+        }
+        if (sugars < 0) {
+            missing.add("açúcares");
+        }
+        if (saturatedFat < 0) {
+            missing.add("gordura saturada");
+        }
+        if (sodiumMg < 0) {
+            missing.add("sódio");
+        }
+        return "Não há dados suficientes para classificar. Faltam: " + joinSignals(missing) + ".";
+    }
+
+    private ScoreInfo calculatePartialScore(
+            JSONObject product,
+            JSONObject nutriments,
+            String dataSources) {
+        if (isMineralWaterData(product)) {
+            return ScoreInfo.withScore(
+                    85,
+                    "A",
+                    classificationForGrade("A"),
+                    "Estimativa parcial",
+                    "Classificação parcial baseada na identificação segura como água mineral. "
+                            + "Esse tipo de produto pode não declarar tabela nutricional.");
+        }
+
+        double weightedQuality = 0;
+        int totalWeight = 0;
+        ArrayList<String> evidence = new ArrayList<>();
+
+        int nutrientLevelCount = 0;
+        int nutrientLevelQuality = 0;
+        for (String nutrient : new String[]{"sugars", "saturated-fat", "salt", "fat"}) {
+            String level = readNutrientLevel(product, nutrient);
+            if (TextUtils.isEmpty(level)) {
+                continue;
             }
+            nutrientLevelCount++;
+            if (level.contains("high")) {
+                nutrientLevelQuality += 18;
+            } else if (level.contains("moderate")) {
+                nutrientLevelQuality += 50;
+            } else if (level.contains("low")) {
+                nutrientLevelQuality += 78;
+            } else {
+                nutrientLevelCount--;
+            }
+        }
+        if (nutrientLevelCount >= 2) {
+            weightedQuality += (nutrientLevelQuality / (double) nutrientLevelCount) * 60;
+            totalWeight += 60;
+            evidence.add("níveis nutricionais informados");
         }
 
         int novaGroup = readNovaGroup(product, nutriments);
         if (novaGroup > 0) {
-            signals++;
-            usedSignals.add("processamento NOVA");
-            if (novaGroup >= 4) {
-                score -= 18;
-            } else if (novaGroup == 3) {
-                score -= 10;
-            } else if (novaGroup == 2) {
-                score -= 4;
-            } else {
-                score += 4;
+            weightedQuality += qualityForNova(novaGroup) * 40;
+            totalWeight += 40;
+            evidence.add("processamento NOVA " + novaGroup);
+        } else {
+            int industrialIndicators = countIndustrialIngredientIndicators(product);
+            if (industrialIndicators >= 2) {
+                weightedQuality += 18 * 40;
+                totalWeight += 40;
+                evidence.add("ingredientes típicos de ultraprocessados");
+            } else if (isTypicalUltraProcessedCategory(product)) {
+                weightedQuality += 35 * 30;
+                totalWeight += 30;
+                evidence.add("categoria geralmente ultraprocessada");
+            } else if (isVariableProcessedCategory(product)) {
+                weightedQuality += 55 * 30;
+                totalWeight += 30;
+                evidence.add("categoria processada com composição variável");
             }
         }
 
-        if (signals == 0) {
-            return ScoreInfo.withoutScore();
+        if (totalWeight == 0) {
+            return ScoreInfo.withScore(
+                    50,
+                    "C",
+                    "Classificação provisória",
+                    "Estimativa parcial",
+                    "Classificação provisória C usada como ponto neutro porque a fonte não trouxe "
+                            + "tabela nutricional, processamento, ingredientes ou níveis suficientes. "
+                            + "Ela não representa uma avaliação completa do produto.");
         }
 
-        int finalScore = clamp(score, 0, 100);
-        String confidence = signals >= 3 ? "estimada" : "estimada com poucos dados";
+        int quality = clamp((int) Math.round(weightedQuality / totalWeight), 0, 79);
+        String grade = gradeForQuality(quality);
         return ScoreInfo.withScore(
-                finalScore,
-                classificationForScore(finalScore),
-                signals >= 3 ? "Estimativa nutricional" : "Estimativa parcial",
+                quality,
+                grade,
+                classificationForGrade(grade),
+                "Estimativa parcial",
                 String.format(
                         Locale.getDefault(),
-                        "Este produto não trouxe Nutri-Score. A nota foi %s com os dados estruturados disponíveis nas fontes consultadas (%s): %s. Use como triagem rápida, não como avaliação oficial.",
-                        confidence,
-                        firstNonEmpty(dataSources, SOURCE_OPEN_FOOD_FACTS),
-                        joinSignals(usedSignals)));
+                        "Classificação parcial %s baseada em %s. Faltam dados da tabela nutricional, "
+                                + "por isso o resultado tem confiança limitada. Fonte: %s.",
+                        grade,
+                        joinSignals(evidence),
+                        firstNonEmpty(dataSources, SOURCE_OPEN_FOOD_FACTS)));
     }
 
-    private String nutriScoreExplanation(String grade, int score, String dataSources) {
-        return String.format(
-                Locale.getDefault(),
-                "Nota baseada no Nutri-Score %s informado nas fontes consultadas (%s): %d de 100. O Boa Escolha usa essa escala para destacar rapidamente opções mais favoráveis no mercado. É uma orientação simples, não uma recomendação médica.",
-                grade,
-                firstNonEmpty(dataSources, SOURCE_OPEN_FOOD_FACTS),
-                score);
+    private String readNutrientLevel(JSONObject product, String nutrient) {
+        JSONObject levels = product.optJSONObject("nutrient_levels");
+        String level = levels != null ? levels.optString(nutrient) : "";
+        if (!TextUtils.isEmpty(level)) {
+            return level.toLowerCase(Locale.ROOT);
+        }
+        JSONArray tags = product.optJSONArray("nutrient_levels_tags");
+        if (tags != null) {
+            for (int index = 0; index < tags.length(); index++) {
+                String tag = tags.optString(index).toLowerCase(Locale.ROOT);
+                if (tag.contains(":" + nutrient + "-in-")
+                        || tag.startsWith(nutrient + "-in-")) {
+                    return tag;
+                }
+            }
+        }
+        return "";
+    }
+
+    private boolean isMineralWaterData(JSONObject product) {
+        String text = normalizedProductContext(product);
+        return text.contains("agua mineral")
+                || text.contains("aguas minerais")
+                || text.contains("mineral water")
+                || text.contains("spring water")
+                || text.contains("water, bottled");
+    }
+
+    private int countIndustrialIngredientIndicators(JSONObject product) {
+        String text = normalizeSearchText(firstNonEmpty(
+                product.optString("ingredients_text_pt"),
+                product.optString("ingredients_text"),
+                ""));
+        int indicators = 0;
+        for (String indicator : new String[]{
+                "xarope de glicose",
+                "acucar invertido",
+                "maltodextrina",
+                "gordura hidrogenada",
+                "amido modificado",
+                "aromatizante",
+                "emulsificante",
+                "edulcorante",
+                "realcador de sabor",
+                "corante artificial",
+                "espessante"
+        }) {
+            if (text.contains(indicator)) {
+                indicators++;
+            }
+        }
+        return indicators;
+    }
+
+    private boolean isTypicalUltraProcessedCategory(JSONObject product) {
+        String text = normalizedProductContext(product);
+        for (String category : new String[]{
+                "sorvete",
+                "sorv ",
+                "ice cream",
+                "gelato",
+                "refrigerante",
+                "soft drink",
+                "biscoito recheado",
+                "bolacha recheada",
+                "salgadinho",
+                "macarrao instantaneo",
+                "instant noodle",
+                "nugget",
+                "salsicha",
+                "cereal matinal acucarado",
+                "bebida lactea"
+        }) {
+            if (text.contains(category)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean isVariableProcessedCategory(JSONObject product) {
+        String text = normalizedProductContext(product);
+        return text.contains("pasta de grao de bico")
+                || text.contains("pasta de grao-de-bico")
+                || text.contains("homus")
+                || text.contains("hummus");
+    }
+
+    private String normalizedProductContext(JSONObject product) {
+        return normalizeSearchText(
+                product.optString("product_name_pt") + " "
+                        + product.optString("product_name") + " "
+                        + product.optString("generic_name_pt") + " "
+                        + product.optString("generic_name") + " "
+                        + product.optString("categories") + " "
+                        + product.optString("categories_tags"));
+    }
+
+    private int qualityForNutriScore(String grade) {
+        switch (grade) {
+            case "a":
+                return 90;
+            case "b":
+                return 72;
+            case "c":
+                return 52;
+            case "d":
+                return 32;
+            case "e":
+                return 12;
+            default:
+                return 0;
+        }
+    }
+
+    private int maximumQualityForNutriScore(String grade) {
+        switch (grade) {
+            case "a":
+                return 100;
+            case "b":
+                return 79;
+            case "c":
+                return 64;
+            case "d":
+                return 44;
+            case "e":
+                return 24;
+            default:
+                return 0;
+        }
+    }
+
+    private int calculateNutritionQuality(
+            double energyKcal,
+            double sugars,
+            double saturatedFat,
+            double sodiumMg,
+            double fiber,
+            double proteins) {
+        int quality = 100;
+        quality -= steppedPenalty(sugars, new double[]{4.5, 9, 13.5, 22.5, 31, 45},
+                new int[]{4, 8, 13, 20, 27, 35});
+        quality -= steppedPenalty(saturatedFat, new double[]{1, 3, 5, 7, 10},
+                new int[]{4, 9, 14, 20, 25});
+        quality -= steppedPenalty(sodiumMg, new double[]{90, 300, 450, 600, 900},
+                new int[]{3, 8, 13, 19, 25});
+        quality -= steppedPenalty(energyKcal, new double[]{240, 320, 400, 480, 560},
+                new int[]{3, 6, 9, 12, 15});
+        if (fiber >= 6) {
+            quality += 10;
+        } else if (fiber >= 3) {
+            quality += 5;
+        }
+        if (proteins >= 10) {
+            quality += 5;
+        }
+        return clamp(quality, 0, 100);
+    }
+
+    private int steppedPenalty(double value, double[] limits, int[] penalties) {
+        int penalty = 0;
+        for (int index = 0; index < limits.length; index++) {
+            if (value >= limits[index]) {
+                penalty = penalties[index];
+            }
+        }
+        return penalty;
+    }
+
+    private int qualityForNova(int novaGroup) {
+        switch (novaGroup) {
+            case 1:
+                return 95;
+            case 2:
+                return 78;
+            case 3:
+                return 50;
+            case 4:
+                return 10;
+            default:
+                return 0;
+        }
+    }
+
+    private boolean isLiquidProduct(JSONObject product) {
+        String text = normalizeSearchText(
+                product.optString("categories") + " "
+                        + product.optString("categories_tags") + " "
+                        + product.optString("product_name") + " "
+                        + product.optString("quantity"));
+        return text.contains("bebida")
+                || text.contains("beverage")
+                || text.contains("refrigerante")
+                || text.contains("suco")
+                || text.contains("juice")
+                || text.matches(".*\\b[0-9,.]+\\s*(ml|l)\\b.*")
+                && !text.contains("sorvete")
+                && !text.contains("sorv ")
+                && !text.contains("ice cream")
+                && !text.contains("gelato");
+    }
+
+    private int countAnvisaWarnings(
+            double addedSugars,
+            double saturatedFat,
+            double sodiumMg,
+            boolean liquid) {
+        int warnings = 0;
+        if (addedSugars >= (liquid ? 7.5 : 15)) {
+            warnings++;
+        }
+        if (saturatedFat >= (liquid ? 3 : 6)) {
+            warnings++;
+        }
+        if (sodiumMg >= (liquid ? 300 : 600)) {
+            warnings++;
+        }
+        return warnings;
+    }
+
+    private int countPahoWarnings(
+            double energyKcal,
+            double addedSugars,
+            double fat,
+            double saturatedFat,
+            double transFat,
+            double sodiumMg) {
+        if (energyKcal <= 0) {
+            return 0;
+        }
+        int warnings = 0;
+        if (addedSugars >= 0 && addedSugars * 4 >= energyKcal * 0.10) {
+            warnings++;
+        }
+        if (fat >= 0 && fat * 9 >= energyKcal * 0.30) {
+            warnings++;
+        }
+        if (saturatedFat >= 0 && saturatedFat * 9 >= energyKcal * 0.10) {
+            warnings++;
+        }
+        if (transFat >= 0 && transFat * 9 >= energyKcal * 0.01) {
+            warnings++;
+        }
+        if (sodiumMg >= energyKcal) {
+            warnings++;
+        }
+        return warnings;
+    }
+
+    private int applyWarningCaps(int quality, int anvisaWarnings, int pahoWarnings) {
+        int strongestWarningCount = Math.max(anvisaWarnings, pahoWarnings);
+        if (strongestWarningCount >= 3) {
+            return Math.min(quality, 24);
+        }
+        if (strongestWarningCount == 2) {
+            return Math.min(quality, 44);
+        }
+        if (strongestWarningCount == 1) {
+            return Math.min(quality, 64);
+        }
+        return quality;
     }
 
     private double readFirstNutriment(JSONObject nutriments, String... keys) {
@@ -1208,43 +1402,6 @@ public class MainActivity extends AppCompatActivity {
             }
         }
         return -1;
-    }
-
-    private int nutrientLevelPenalty(JSONObject nutrientLevels, JSONObject product, String nutrient, int high, int moderate, int low) {
-        String level = "";
-        if (nutrientLevels != null) {
-            level = nutrientLevels.optString(nutrient);
-        }
-        if (TextUtils.isEmpty(level)) {
-            level = readNutrientLevelTag(product, nutrient);
-        }
-        if (TextUtils.isEmpty(level)) {
-            return -1;
-        }
-        if (level.contains("high")) {
-            return high;
-        }
-        if (level.contains("moderate")) {
-            return moderate;
-        }
-        if (level.contains("low")) {
-            return low;
-        }
-        return -1;
-    }
-
-    private String readNutrientLevelTag(JSONObject product, String nutrient) {
-        JSONArray tags = product.optJSONArray("nutrient_levels_tags");
-        if (tags == null) {
-            return "";
-        }
-        for (int index = 0; index < tags.length(); index++) {
-            String tag = tags.optString(index).toLowerCase(Locale.ROOT);
-            if (tag.contains(nutrient)) {
-                return tag;
-            }
-        }
-        return "";
     }
 
     private int readNovaGroup(JSONObject product, JSONObject nutriments) {
@@ -1451,9 +1608,13 @@ public class MainActivity extends AppCompatActivity {
         identity.addView(txtBrand, brandParams);
 
         txtNutriScore = new TextView(this);
-        txtNutriScore.setText(!TextUtils.isEmpty(product.nutriScore)
-                ? "Nutri-Score " + product.nutriScore.toUpperCase(Locale.ROOT)
-                : product.score.source);
+        boolean partialClassification = product.score.source.toLowerCase(Locale.ROOT).contains("parcial");
+        txtNutriScore.setText(product.score.hasScore
+                ? "Leitura Decifrou" + (partialClassification ? " • estimativa parcial" : "")
+                + (!TextUtils.isEmpty(product.nutriScore)
+                ? " • Nutri-Score " + product.nutriScore.toUpperCase(Locale.ROOT)
+                : "")
+                : "Dados nutricionais incompletos");
         txtNutriScore.setTextColor(getColor(R.color.one_ui_text_secondary));
         txtNutriScore.setTextSize(12);
         LinearLayout.LayoutParams sourceParams = new LinearLayout.LayoutParams(
@@ -1476,7 +1637,7 @@ public class MainActivity extends AppCompatActivity {
                 ? "Evite: alerta da Anvisa"
                 : product.score.hasScore
                 ? product.score.classification
-                : "Sem nota suficiente");
+                : "Dados insuficientes");
         txtClassification.setTextColor(getColor(hasRecallAlert
                 ? R.color.one_ui_danger
                 : product.score.hasScore
@@ -1492,8 +1653,19 @@ public class MainActivity extends AppCompatActivity {
         classificationParams.setMargins(0, dp(2), 0, dp(4));
         dynamicContent.addView(txtClassification, classificationParams);
 
+        TextView classificationDetails = new TextView(this);
+        classificationDetails.setText(product.score.explanation);
+        classificationDetails.setTextColor(getColor(R.color.one_ui_text_secondary));
+        classificationDetails.setTextSize(12);
+        classificationDetails.setLineSpacing(dp(2), 1f);
+        LinearLayout.LayoutParams classificationDetailsParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        classificationDetailsParams.setMargins(0, 0, 0, dp(10));
+        dynamicContent.addView(classificationDetails, classificationDetailsParams);
+
         if (product.score.hasScore) {
-            txtScore.setText(String.valueOf(product.score.value));
+            txtScore.setText(product.score.grade);
             updateScoreColor(product.score.value);
         } else {
             txtScore.setText("–");
@@ -1559,7 +1731,7 @@ public class MainActivity extends AppCompatActivity {
         TextView footer = new TextView(this);
         footer.setText(String.format(
                 Locale.getDefault(),
-                "Dados fornecidos por %s. A nota é uma orientação simples e não substitui recomendação médica.",
+                "Dados fornecidos por %s. A classificação é uma orientação geral e não substitui recomendação médica ou nutricional.",
                 firstNonEmpty(product.dataSources, SOURCE_OPEN_FOOD_FACTS)));
         footer.setTextColor(getColor(R.color.one_ui_text_muted));
         footer.setTextSize(12);
@@ -1601,10 +1773,9 @@ public class MainActivity extends AppCompatActivity {
 
     private void addProcessingAssessmentCard(ProductInfo product) {
         LinearLayout card = createAssessmentCard("PROCESSAMENTO");
-        int score = processingScore(product.novaGroup);
-        addAssessmentBar(card, score, "Mais processado", "Menos processado");
-
         if (product.novaGroup > 0) {
+            int score = processingScore(product.novaGroup);
+            addAssessmentBar(card, score, "Mais processado", "Menos processado");
             addAssessmentRow(
                     card,
                     novaDescription(product.novaGroup),
@@ -1619,7 +1790,11 @@ public class MainActivity extends AppCompatActivity {
 
     private void addNutrientAssessmentCard(ProductInfo product) {
         LinearLayout card = createAssessmentCard("NUTRIENTES");
-        addAssessmentBar(card, nutrientBalanceScore(product), "Menos equilibrado", "Mais equilibrado");
+        if (product.score != null && product.score.hasScore) {
+            addAssessmentBar(card, nutrientBalanceScore(product), "Menos equilibrado", "Mais equilibrado");
+        } else {
+            addAssessmentRow(card, product.score.explanation, R.color.one_ui_warning, false);
+        }
 
         int rows = 0;
         rows += addSugarAssessmentRow(card, product.sugars, false);
@@ -1641,12 +1816,11 @@ public class MainActivity extends AppCompatActivity {
     private void addAdditiveAssessmentCard(ProductInfo product) {
         LinearLayout card = createAssessmentCard("ADITIVOS");
         int additiveCount = countDisplayItems(product.additives);
-        int score = additiveCount == 0 ? 70 : clamp(95 - (additiveCount * 18), 15, 85);
-        addAssessmentBar(card, score, "Mais aditivos", "Menos aditivos");
-
         if (additiveCount == 0) {
-            addAssessmentRow(card, "Sem aditivos listados na base", R.color.one_ui_good, false);
+            addAssessmentRow(card, "Aditivos não informados na base", R.color.one_ui_warning, false);
         } else {
+            int score = clamp(95 - (additiveCount * 18), 15, 85);
+            addAssessmentBar(card, score, "Mais aditivos", "Menos aditivos");
             addAssessmentRow(
                     card,
                     additiveCount == 1 ? "Contém 1 aditivo listado" : "Contém " + additiveCount + " aditivos listados",
@@ -3421,8 +3595,8 @@ public class MainActivity extends AppCompatActivity {
 
     private void showSortMenu() {
         PopupMenu menu = new PopupMenu(this, btnSort);
-        menu.getMenu().add(0, 1, 0, "Maior nota");
-        menu.getMenu().add(0, 2, 1, "Menor nota");
+        menu.getMenu().add(0, 1, 0, "Melhor classificação");
+        menu.getMenu().add(0, 2, 1, "Pior classificação");
         menu.setOnMenuItemClickListener(item -> {
             sortHighestFirst = item.getItemId() == 1;
             if (!TextUtils.isEmpty(currentListKey)) {
@@ -3445,7 +3619,7 @@ public class MainActivity extends AppCompatActivity {
         txtSectionTitle.setText(filtering ? "Resultados" : sectionTitle);
         JSONArray filteredItems = filterItemsByNameOrBrand(rawItems, query);
         JSONArray items = sortItemsByScore(filteredItems, sortHighestFirst);
-        txtSectionMeta.setText(items.length() + " itens" + (KEY_HISTORY.equals(key) ? "" : " · " + (sortHighestFirst ? "maior nota" : "menor nota")));
+        txtSectionMeta.setText(items.length() + " itens" + (KEY_HISTORY.equals(key) ? "" : " · " + (sortHighestFirst ? "melhor classificação" : "pior classificação")));
         dynamicContent.removeAllViews();
         if (items.length() == 0) {
             if (filtering) {
@@ -3502,8 +3676,7 @@ public class MainActivity extends AppCompatActivity {
                 ? "Evite: alerta da Anvisa"
                 : savedProduct.score != null && savedProduct.score.hasScore
                 ? savedProduct.score.classification
-                : "Sem nota suficiente";
-        String score = item.optString("score");
+                : "Dados insuficientes";
 
         if (showDivider) {
             View divider = new View(this);
@@ -3539,14 +3712,14 @@ public class MainActivity extends AppCompatActivity {
 
         TextView scoreView = new TextView(this);
         scoreView.setGravity(android.view.Gravity.CENTER);
-        scoreView.setText(TextUtils.isEmpty(score) ? "-" : score);
+        scoreView.setText(savedProduct.score.hasScore ? savedProduct.score.grade : "-");
         scoreView.setTextColor(getColor(android.R.color.white));
         scoreView.setTextSize(10);
         scoreView.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
         scoreView.setBackgroundResource(R.drawable.bg_score_circle);
         if (scoreView.getBackground() instanceof GradientDrawable) {
             GradientDrawable background = (GradientDrawable) scoreView.getBackground().mutate();
-            background.setColor(getColor(scoreColorRes(parseScore(score))));
+            background.setColor(getColor(scoreColorRes(savedProduct.score.value)));
         }
         FrameLayout.LayoutParams scoreParams = new FrameLayout.LayoutParams(dp(28), dp(28));
         scoreParams.gravity = android.view.Gravity.TOP | android.view.Gravity.END;
@@ -3631,7 +3804,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void addLoginProfileScreen() {
-        addCenteredTitle("Boa Escolha", 28, dp(22), true);
+        addCenteredTitle("Decifrou", 28, dp(22), true);
         addCenteredTitle("Compras mais saudáveis\nno supermercado", 24, dp(26), true);
         addCenteredSubtitle("Encontre alimentos mais saudáveis que combinam\ncom seu perfil alimentar, em poucos segundos!");
 
@@ -3685,7 +3858,7 @@ public class MainActivity extends AppCompatActivity {
         dynamicContent.addView(google, googleParams);
 
         TextView terms = new TextView(this);
-        terms.setText("Ao continuar, você concorda com os Termos de uso e Política de Privacidade do Boa Escolha.");
+        terms.setText("Ao continuar, você concorda com os Termos de uso e Política de Privacidade do Decifrou.");
         terms.setTextColor(getColor(R.color.one_ui_text_secondary));
         terms.setTextSize(12);
         terms.setLineSpacing(dp(2), 1f);
@@ -3701,7 +3874,7 @@ public class MainActivity extends AppCompatActivity {
         addProfileMenuRow(R.drawable.ic_logout, "Sair da conta", false, view -> signOutProfile());
 
         TextView version = new TextView(this);
-        version.setText("Boa Escolha 1.0");
+        version.setText("Decifrou 1.0");
         version.setTextColor(getColor(R.color.one_ui_text_secondary));
         version.setTextSize(12);
         version.setLineSpacing(dp(2), 1f);
@@ -3745,7 +3918,7 @@ public class MainActivity extends AppCompatActivity {
         LinearLayout content = createDialogContent();
 
         addDialogTitle(content, "Tema");
-        addDialogMessage(content, "Escolha como o Boa Escolha deve aparecer neste aparelho.");
+        addDialogMessage(content, "Escolha como o Decifrou deve aparecer neste aparelho.");
 
         String current = getPrefs().getString(KEY_THEME_MODE, THEME_SYSTEM);
         addThemeOption(content, dialog, "Conforme o sistema", "Usa o modo claro ou escuro configurado no celular.", THEME_SYSTEM, current);
@@ -3809,8 +3982,8 @@ public class MainActivity extends AppCompatActivity {
 
         addDialogTitle(content, "Termos e privacidade");
         addDialogMessage(content,
-                "O Boa Escolha consulta dados públicos do Open Food Facts e mostra uma nota simples para ajudar na comparação de alimentos.\n\n" +
-                        "A nota é apenas uma orientação alimentar geral. Ela não substitui avaliação médica, nutricional ou recomendação profissional.\n\n" +
+                "O Decifrou consulta dados públicos do Open Food Facts e combina critérios da Anvisa, da OPAS, do Nutri-Score e do processamento NOVA para classificar alimentos de A a E.\n\n" +
+                        "A classificação é apenas uma orientação alimentar geral. Ela não substitui avaliação médica, nutricional ou recomendação profissional.\n\n" +
                         "Quando você entra com sua conta, o app pode sincronizar histórico e listas no Firebase para uso em outro aparelho. Nome, e-mail e produtos salvos ficam associados à sua conta.\n\n" +
                         "Você pode sair da conta pelo Perfil. Recursos e textos podem mudar enquanto o app estiver em desenvolvimento.");
         addDialogCloseButton(content, dialog, "Fechar");
@@ -4321,6 +4494,7 @@ public class MainActivity extends AppCompatActivity {
             json.put("dataSources", firstNonEmpty(product.dataSources, SOURCE_OPEN_FOOD_FACTS));
             json.put("classification", product.score.classification);
             json.put("score", product.score.hasScore ? String.valueOf(product.score.value) : "");
+            json.put("grade", product.score.hasScore ? product.score.grade : "");
             json.put("scoreSource", product.score.source);
             json.put("explanation", product.score.explanation);
             json.put("quantity", product.quantity);
@@ -4372,8 +4546,9 @@ public class MainActivity extends AppCompatActivity {
         map.put("imageUrl", firstNonEmpty(product.imageUrl, ""));
         map.put("nutriScore", firstNonEmpty(product.nutriScore, ""));
         map.put("dataSources", firstNonEmpty(product.dataSources, SOURCE_OPEN_FOOD_FACTS));
-        map.put("classification", product.score != null ? product.score.classification : "Sem nota suficiente");
+        map.put("classification", product.score != null ? product.score.classification : "Dados insuficientes");
         map.put("score", product.score != null && product.score.hasScore ? product.score.value : -1);
+        map.put("grade", product.score != null && product.score.hasScore ? product.score.grade : "");
         map.put("scoreSource", product.score != null ? firstNonEmpty(product.score.source, "") : "");
         map.put("explanation", product.score != null ? firstNonEmpty(product.score.explanation, "") : "");
         map.put("quantity", firstNonEmpty(product.quantity, ""));
@@ -4513,14 +4688,22 @@ public class MainActivity extends AppCompatActivity {
         product.recallAlertUrl = item.optString("recallAlertUrl");
         product.recallAlertSource = item.optString("recallAlertSource");
         String savedScore = item.optString("score");
+        String savedGrade = item.optString("grade").toUpperCase(Locale.ROOT);
         int score = parseScore(savedScore);
-        product.score = !TextUtils.isEmpty(savedScore) && score >= 0
+        boolean hasCurrentClassification = savedGrade.matches("[A-E]");
+        product.score = hasCurrentClassification && !TextUtils.isEmpty(savedScore) && score >= 0
                 ? ScoreInfo.withScore(
                         score,
-                        firstNonEmpty(item.optString("classification"), classificationForScore(score)),
-                        firstNonEmpty(item.optString("scoreSource"), "Boa Escolha"),
-                        firstNonEmpty(item.optString("explanation"), "Nota salva anteriormente no Boa Escolha."))
+                        savedGrade,
+                        firstNonEmpty(item.optString("classification"), classificationForGrade(savedGrade)),
+                        updateLegacyBrand(firstNonEmpty(item.optString("scoreSource"), "Decifrou")),
+                        updateLegacyBrand(firstNonEmpty(
+                                item.optString("explanation"),
+                                "Classificação salva anteriormente no Decifrou.")))
                 : ScoreInfo.withoutScore();
+        if (!hasCurrentClassification) {
+            product.cachedAt = 0;
+        }
         sanitizeProductRecallAlert(product);
         return product;
     }
@@ -4597,7 +4780,8 @@ public class MainActivity extends AppCompatActivity {
                 item.put("imageUrl", firstNonEmpty(document.getString("imageUrl"), ""));
                 item.put("nutriScore", firstNonEmpty(document.getString("nutriScore"), ""));
                 item.put("dataSources", firstNonEmpty(document.getString("dataSources"), SOURCE_OPEN_FOOD_FACTS));
-                item.put("classification", firstNonEmpty(document.getString("classification"), "Sem nota suficiente"));
+                item.put("classification", firstNonEmpty(document.getString("classification"), "Dados insuficientes"));
+                item.put("grade", firstNonEmpty(document.getString("grade"), ""));
                 item.put("scoreSource", firstNonEmpty(document.getString("scoreSource"), ""));
                 item.put("explanation", firstNonEmpty(document.getString("explanation"), ""));
                 item.put("quantity", firstNonEmpty(document.getString("quantity"), ""));
@@ -4759,9 +4943,9 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private int scoreColorRes(int score) {
-        if (score >= 70) {
+        if (score >= 65) {
             return R.color.one_ui_good;
-        } else if (score >= 50) {
+        } else if (score >= 45) {
             return R.color.one_ui_warning;
         } else if (score >= 1) {
             return R.color.one_ui_danger;
@@ -4769,17 +4953,36 @@ public class MainActivity extends AppCompatActivity {
         return R.color.one_ui_text_muted;
     }
 
-    private String classificationForScore(int score) {
-        if (score >= 90) {
-            return "Ótima escolha no mercado";
-        } else if (score >= 70) {
-            return "Boa escolha para comparar";
-        } else if (score >= 50) {
-            return "Consuma com moderação";
-        } else if (score >= 30) {
-            return "Pouco saudável no dia a dia";
-        } else {
-            return "Evite no dia a dia";
+    private String gradeForQuality(int quality) {
+        if (quality >= 80) {
+            return "A";
+        }
+        if (quality >= 65) {
+            return "B";
+        }
+        if (quality >= 45) {
+            return "C";
+        }
+        if (quality >= 25) {
+            return "D";
+        }
+        return "E";
+    }
+
+    private String classificationForGrade(String grade) {
+        switch (grade) {
+            case "A":
+                return "Perfil nutricional muito favorável";
+            case "B":
+                return "Perfil nutricional favorável";
+            case "C":
+                return "Perfil nutricional intermediário";
+            case "D":
+                return "Perfil nutricional pouco favorável";
+            case "E":
+                return "Perfil nutricional menos favorável";
+            default:
+                return "Sem classificação suficiente";
         }
     }
 
@@ -4802,6 +5005,10 @@ public class MainActivity extends AppCompatActivity {
             }
         }
         return "";
+    }
+
+    private String updateLegacyBrand(String text) {
+        return text.replace("Boa Escolha", "Decifrou");
     }
 
     @Override
@@ -5100,29 +5307,47 @@ public class MainActivity extends AppCompatActivity {
     private static class ScoreInfo {
         final boolean hasScore;
         final int value;
+        final String grade;
         final String classification;
         final String source;
         final String explanation;
 
-        private ScoreInfo(boolean hasScore, int value, String classification, String source, String explanation) {
+        private ScoreInfo(
+                boolean hasScore,
+                int value,
+                String grade,
+                String classification,
+                String source,
+                String explanation) {
             this.hasScore = hasScore;
             this.value = value;
+            this.grade = grade;
             this.classification = classification;
             this.source = source;
             this.explanation = explanation;
         }
 
-        static ScoreInfo withScore(int value, String classification, String source, String explanation) {
-            return new ScoreInfo(true, value, classification, source, explanation);
+        static ScoreInfo withScore(
+                int value,
+                String grade,
+                String classification,
+                String source,
+                String explanation) {
+            return new ScoreInfo(true, value, grade, classification, source, explanation);
         }
 
         static ScoreInfo withoutScore() {
+            return withoutScore("Não há dados suficientes para calcular uma classificação.");
+        }
+
+        static ScoreInfo withoutScore(String explanation) {
             return new ScoreInfo(
                     false,
                     0,
-                    "Sem nota suficiente",
+                    "",
                     "Dados insuficientes",
-                    "Não há dados suficientes para calcular uma nota.");
+                    "Dados insuficientes",
+                    explanation);
         }
     }
 

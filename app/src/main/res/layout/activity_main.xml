@@ -275,7 +275,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="12dp"
                 android:lineSpacingExtra="2dp"
-                android:text="A nota é uma orientação simples e não substitui recomendação médica."
+                android:text="A classificação é uma orientação geral e não substitui recomendação médica ou nutricional."
                 android:textColor="@color/one_ui_text_muted"
                 android:textSize="12sp" />
         </LinearLayout>

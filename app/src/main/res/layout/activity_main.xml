@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/floatingSearchContentArea"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@color/one_ui_background">
@@ -281,34 +282,21 @@
         </LinearLayout>
     </ScrollView>
 
-    <LinearLayout
+    <FrameLayout
         android:id="@+id/searchContainer"
-        android:layout_width="match_parent"
-        android:layout_height="56dp"
-        android:layout_gravity="bottom|center_horizontal"
-        android:layout_marginStart="58dp"
-        android:layout_marginEnd="58dp"
-        android:layout_marginBottom="92dp"
-        android:background="@drawable/bg_search_bar"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:layout_gravity="start|top"
+        android:background="@drawable/bg_floating_search"
+        android:clickable="true"
         android:elevation="12dp"
-        android:gravity="center_vertical"
-        android:orientation="horizontal"
+        android:focusable="true"
         android:translationZ="12dp">
-
-        <ImageView
-            android:layout_width="30dp"
-            android:layout_height="30dp"
-            android:contentDescription="@string/consult_code"
-            android:padding="5dp"
-            android:src="@drawable/ic_search"
-            android:tint="@color/one_ui_text_secondary" />
 
         <EditText
             android:id="@+id/editSearch"
-            android:layout_width="0dp"
+            android:layout_width="match_parent"
             android:layout_height="match_parent"
-            android:layout_marginStart="6dp"
-            android:layout_weight="1"
             android:background="@color/transparent"
             android:hint="Pesquisar"
             android:imeOptions="actionSearch"
@@ -317,19 +305,32 @@
             android:singleLine="true"
             android:textColor="@color/one_ui_text_primary"
             android:textColorHint="@color/one_ui_text_secondary"
-            android:textSize="18sp" />
+            android:textSize="18sp"
+            android:visibility="gone" />
+
+        <ImageView
+            android:id="@+id/iconFloatingSearch"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:layout_gravity="start|center_vertical"
+            android:contentDescription="@string/consult_code"
+            android:padding="13dp"
+            android:src="@drawable/ic_search"
+            android:tint="@color/one_ui_text_secondary" />
 
         <ImageButton
             android:id="@+id/btnSearch"
             android:layout_width="42dp"
             android:layout_height="42dp"
+            android:layout_gravity="end|center_vertical"
             android:layout_marginEnd="4dp"
             android:background="@drawable/bg_icon_action"
             android:contentDescription="Escanear produto"
             android:padding="9dp"
             android:src="@drawable/ic_scan"
-            android:tint="@color/one_ui_accent" />
-    </LinearLayout>
+            android:tint="@color/one_ui_accent"
+            android:visibility="gone" />
+    </FrameLayout>
 
     <LinearLayout
         android:id="@+id/bottomNav"

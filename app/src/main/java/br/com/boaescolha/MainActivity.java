@@ -170,6 +170,7 @@ public class MainActivity extends AppCompatActivity {
     private ImageButton btnSearch;
     private ImageButton btnProfile;
     private ImageButton btnSaveProduct;
+    private FloatingSearchController floatingSearchController;
     private View indicatorSearch;
     private View indicatorLists;
     private View indicatorRecalls;
@@ -255,6 +256,7 @@ public class MainActivity extends AppCompatActivity {
         textSearch = findViewById(R.id.textSearch);
         textLists = findViewById(R.id.textLists);
         textRecalls = findViewById(R.id.textRecalls);
+        floatingSearchController = FloatingSearchController.attach(this, "main");
 
         applySystemNavigationInsets(bottomNav);
         hideBottomNavigationWhileKeyboardIsOpen();
@@ -276,6 +278,9 @@ public class MainActivity extends AppCompatActivity {
         getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
             @Override
             public void handleOnBackPressed() {
+                if (floatingSearchController != null && floatingSearchController.collapseIfExpanded()) {
+                    return;
+                }
                 if (!handleBackNavigation()) {
                     finish();
                 }
@@ -383,12 +388,21 @@ public class MainActivity extends AppCompatActivity {
                 decorView.getWindowVisibleDisplayFrame(visibleWindow);
                 int windowHeight = decorView.getRootView().getHeight();
                 int coveredHeight = windowHeight - visibleWindow.height();
-                setKeyboardVisible(coveredHeight > windowHeight * 0.15f);
+                boolean visible = coveredHeight > windowHeight * 0.15f;
+                if (floatingSearchController != null) {
+                    floatingSearchController.setKeyboardCoveredHeight(visible ? coveredHeight : 0);
+                }
+                setKeyboardVisible(visible);
             });
             return;
         }
         ViewCompat.setOnApplyWindowInsetsListener(content, (view, insets) -> {
-            setKeyboardVisible(insets.isVisible(WindowInsetsCompat.Type.ime()));
+            boolean visible = insets.isVisible(WindowInsetsCompat.Type.ime());
+            if (floatingSearchController != null) {
+                floatingSearchController.setKeyboardCoveredHeight(
+                        visible ? insets.getInsets(WindowInsetsCompat.Type.ime()).bottom : 0);
+            }
+            setKeyboardVisible(visible);
             return insets;
         });
         ViewCompat.requestApplyInsets(content);
@@ -413,7 +427,9 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void setSearchVisible(boolean visible) {
-        if (searchContainer != null) {
+        if (floatingSearchController != null) {
+            floatingSearchController.setVisible(visible);
+        } else if (searchContainer != null) {
             searchContainer.setVisibility(visible ? View.VISIBLE : View.GONE);
         }
         updateBottomNavigationSpacing();
@@ -423,13 +439,9 @@ public class MainActivity extends AppCompatActivity {
         boolean navVisible = bottomNav != null && bottomNav.getVisibility() == View.VISIBLE;
         boolean searchVisible = searchContainer != null && searchContainer.getVisibility() == View.VISIBLE;
 
-        if (searchContainer != null && searchContainer.getLayoutParams() instanceof ViewGroup.MarginLayoutParams) {
-            ViewGroup.MarginLayoutParams params = (ViewGroup.MarginLayoutParams) searchContainer.getLayoutParams();
-            int targetBottomMargin = navigationInsetBottom + (navVisible ? dp(82) : dp(22));
-            if (params.bottomMargin != targetBottomMargin) {
-                params.bottomMargin = targetBottomMargin;
-                searchContainer.setLayoutParams(params);
-            }
+        int targetSearchBottomOffset = navigationInsetBottom + (navVisible ? dp(82) : dp(22));
+        if (floatingSearchController != null) {
+            floatingSearchController.setCollapsedBottomOffset(targetSearchBottomOffset);
         }
 
         int overlayPadding = navigationInsetBottom + (navVisible ? dp(86) : dp(16));
@@ -517,6 +529,9 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void hideKeyboard() {
+        if (floatingSearchController != null && floatingSearchController.collapseIfExpanded()) {
+            return;
+        }
         InputMethodManager keyboard = (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
         if (keyboard != null) {
             keyboard.hideSoftInputFromWindow(editSearch.getWindowToken(), 0);
@@ -538,20 +553,28 @@ public class MainActivity extends AppCompatActivity {
         if (btnSearch == null) {
             return;
         }
-        btnSearch.setVisibility(View.VISIBLE);
         btnSearch.setImageResource(R.drawable.ic_scan);
         btnSearch.setColorFilter(getColor(R.color.one_ui_accent));
         btnSearch.setContentDescription("Escanear produto");
         btnSearch.setOnClickListener(view -> startScanner());
+        if (floatingSearchController != null) {
+            floatingSearchController.setActionVisible(true);
+        } else {
+            btnSearch.setVisibility(View.VISIBLE);
+        }
     }
 
     private void configureTextSearchAction() {
         if (btnSearch == null) {
             return;
         }
-        btnSearch.setVisibility(View.GONE);
         btnSearch.setContentDescription(null);
         btnSearch.setOnClickListener(null);
+        if (floatingSearchController != null) {
+            floatingSearchController.setActionVisible(false);
+        } else {
+            btnSearch.setVisibility(View.GONE);
+        }
     }
 
     private void openProductDetails(String code, int returnTab, ProductInfo savedProduct) {
